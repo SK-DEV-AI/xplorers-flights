@@ -101,7 +101,10 @@ button.ghost {
 .footer nav { display: flex; gap: 14px; margin-top: 8px; }
 .footer nav a { color: var(--muted); text-decoration: none; }
 
-/* Fast, cheap motion: transform + opacity only, honors reduced motion. */
+/* Fast, cheap motion: transform + opacity only, honors reduced motion.
+   Images and map tiles fade in once decoded so the page never flashes. */
+img, .leaflet-tile { animation: media-in 0.4s ease-out both; }
+@keyframes media-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -116,10 +119,14 @@ button.ghost {
 .offer:hover { border-color: var(--accent); }
 button.primary { transition: transform 0.12s ease, opacity 0.12s ease; }
 button.primary:hover:not(:disabled) { transform: translateY(-1px); }
+button.ghost { transition: transform 0.12s ease, border-color 0.12s ease; }
+button.ghost:hover { transform: translateY(-1px); border-color: var(--accent); }
+input, select { transition: border-color 0.12s ease, box-shadow 0.12s ease; }
 button.primary:active:not(:disabled) { transform: translateY(0); }
 a { transition: color 0.12s ease; }
 @media (prefers-reduced-motion: reduce) {
   .fade-up, .stagger { animation: none; }
+  img, .leaflet-tile { animation: none; }
   * { transition: none !important; }
 }
 

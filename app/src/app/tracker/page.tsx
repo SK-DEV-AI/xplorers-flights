@@ -14,9 +14,29 @@ interface Weather {
   low: number;
 }
 
+interface StatusRow {
+  flightNo: string;
+  airline: string;
+  status: string;
+  departure: string;
+  arrival: string;
+  delayMin: number | null;
+}
+
+interface SchedRow {
+  origin: string;
+  destination: string;
+  scheduledUtc: string | null;
+  revisedUtc: string | null;
+  terminal: string | null;
+  flightNo: string | null;
+  distanceKm: number | null;
+}
+
 /**
  * Tracker page. Keyless live data, no signup:
- * airport lookup (name, codes, position) + live aircraft near it.
+ * airport lookup (name, codes, position) + live aircraft near it,
+ * plus flight status (Aviationstack) and schedules (AeroDataBox).
  * Proves the site answers more than booking questions.
  */
 export default function TrackerPage() {
@@ -26,6 +46,11 @@ export default function TrackerPage() {
   const [weather, setWeather] = useState<Weather | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [flight, setFlight] = useState("BA117");
+  const [statusRows, setStatusRows] = useState<StatusRow[]>([]);
+  const [schedRows, setSchedRows] = useState<SchedRow[]>([]);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState("");
 
   async function onLookup(e: React.FormEvent) {
     e.preventDefault();
@@ -55,14 +80,39 @@ export default function TrackerPage() {
     }
   }
 
+  async function onStatus(e: React.FormEvent) {
+    e.preventDefault();
+    setStatusBusy(true);
+    setStatusError("");
+    setStatusRows([]);
+    setSchedRows([]);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const [sRes, cRes] = await Promise.all([
+        fetch(`/api/flight-status?flight=${encodeURIComponent(flight)}`),
+        fetch(`/api/schedules?flight=${encodeURIComponent(flight)}&date=${today}`),
+      ]);
+      const sJson = await sRes.json();
+      if (!sRes.ok) throw new Error(sJson.error ?? "Status unavailable.");
+      setStatusRows(sJson.flights ?? []);
+      const cJson = await cRes.json();
+      if (cRes.ok) setSchedRows(cJson.legs ?? []);
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : "Lookup failed.");
+    } finally {
+      setStatusBusy(false);
+    }
+  }
+
   return (
     <>
       <section className="hero fade-up">
-        <p className="muted mono">KEYLESS · NO SIGNUP · LIVE DATA</p>
+        <p className="muted mono">LIVE DATA · STATUS + SCHEDULES + TRACKING</p>
         <h1>Track any airport, live.</h1>
         <p>
           Airport details plus aircraft currently in the air nearby —
-          from public feeds, no key needed.
+          from public feeds, no key needed. Check any flight number
+          for live status and schedule below.
         </p>
       </section>
       <div className="grid">
@@ -84,7 +134,7 @@ export default function TrackerPage() {
             </div>
           )}
           {airport && (
-            <div style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 12 }} className="fade-up">
               <div className="route" style={{ fontWeight: 700, fontSize: 18 }}>{airport.name}</div>
               <div className="meta muted">
                 {airport.type} · {airport.latitude.toFixed(2)}, {airport.longitude.toFixed(2)} · elev {airport.elevation} ft
@@ -121,6 +171,39 @@ export default function TrackerPage() {
                 {a.altitudeFt != null ? `${a.altitudeFt.toLocaleString()} ft` : "alt —"} ·{" "}
                 {a.speedKt != null ? `${a.speedKt} kt` : "speed —"} ·{" "}
                 {a.track != null ? `heading ${a.track}°` : "heading —"}
+              </div>
+            </div>
+          ))}
+        </section>
+        <section className="card fade-up">
+          <h2>Flight status + schedule</h2>
+          <p className="desc">Live status (Aviationstack) and schedule (AeroDataBox). Display only.</p>
+          <form onSubmit={onStatus} style={{ display: "flex", gap: 8 }}>
+            <input value={flight} maxLength={7} onChange={(e) => setFlight(e.target.value.toUpperCase())} placeholder="BA117" aria-label="Flight number" />
+            <button className="primary" style={{ width: "auto", marginTop: 0 }} type="submit" disabled={statusBusy}>
+              {statusBusy ? "…" : "Check"}
+            </button>
+          </form>
+          {statusError !== "" && <div className="error">{statusError}</div>}
+          {statusBusy && <div className="shimmer" style={{ height: 14, borderRadius: 6, marginTop: 12 }} />}
+          {statusRows.map((s, i) => (
+            <div key={i} className="offer stagger">
+              <div className="route" style={{ fontSize: 16 }}>{s.flightNo} · {s.airline}</div>
+              <div className="meta">
+                {s.departure} → {s.arrival} · {s.status}
+                {s.delayMin != null ? ` · delay ${s.delayMin} min` : ""}
+              </div>
+            </div>
+          ))}
+          {schedRows.map((s, i) => (
+            <div key={`sched-${i}`} className="offer stagger">
+              <div className="route" style={{ fontSize: 16 }}>{s.flightNo ?? "Schedule"}</div>
+              <div className="meta">
+                {s.origin} → {s.destination}
+                {s.scheduledUtc ? ` · sched ${s.scheduledUtc}` : ""}
+                {s.revisedUtc ? ` · revised ${s.revisedUtc}` : ""}
+                {s.terminal ? ` · T${s.terminal}` : ""}
+                {s.distanceKm != null ? ` · ${s.distanceKm.toLocaleString()} km` : ""}
               </div>
             </div>
           ))}
