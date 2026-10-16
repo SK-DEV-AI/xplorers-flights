@@ -35,34 +35,28 @@ export default function CopilotPage() {
     setInput("");
     setBusy(true);
     const next: Msg[] = [...log, { role: "user" as const, text: q }];
-    next.push({ role: "tool", text: 'Calling search(origin, destination, date, passengers, cabin)…' });
+    next.push({ role: "tool", text: "Asking big-pickle proxy to parse slots…" });
     setLog(next);
     try {
-      const res = await fetch("/api/search", {
+      // AI bar backend: big-pickle extracts slots, OUR code runs the tools.
+      const res = await fetch("/api/copilot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          origin: "SFO",
-          destination: "HND",
-          departureDate: "2026-11-14",
-          passengers: 2,
-          cabinClass: "economy",
-        }),
+        body: JSON.stringify({ message: q }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Search failed.");
-      const n = (json.offers ?? []).length;
-      setLog([
-        ...next,
-        { role: "tool", text: `Search returned ${n} offer${n === 1 ? "" : "s"}.` },
-        {
-          role: "agent",
-          text:
-            n === 0
-              ? "No options on that route and date. Try different dates or nearby airports."
-              : `Found ${n} option${n === 1 ? "" : "s"}. Open Search to filter and review each one before booking.`,
-        },
-      ]);
+      const trail: Msg[] = [...next];
+      for (const s of json.steps ?? []) trail.push({ role: "tool" as const, text: s });
+      const n = (json.offers ?? []).length + (json.flights ?? []).length;
+      const extra =
+        json.intent === "status" && (json.flights ?? []).length > 0
+          ? ` ${json.flights[0].flightNo}: ${json.flights[0].status}, ${json.flights[0].departure} → ${json.flights[0].arrival}.`
+          : json.intent === "search" && (json.offers ?? []).length > 0
+            ? ` Top pick ${json.offers[0].airline} ${json.offers[0].flightNo} at ${json.offers[0].price} ${json.offers[0].currency}.`
+            : "";
+      trail.push({ role: "agent" as const, text: `${json.reply ?? `Done (${n} result${n === 1 ? "" : "s"}).`}${extra}` });
+      setLog(trail);
     } catch (err) {
       setLog([...next, { role: "agent", text: err instanceof Error ? err.message : "Search failed." }]);
     } finally {
