@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import type { AirportInfo, LiveAircraft } from "@/lib/aviation/keyless";
 
@@ -41,16 +41,27 @@ interface SchedRow {
  */
 export default function TrackerPage() {
   const [code, setCode] = useState("JFK");
+  const [flight, setFlight] = useState("BA117");
+  const [flightInit, setFlightInit] = useState(false);
   const [airport, setAirport] = useState<AirportInfo | null>(null);
   const [traffic, setTraffic] = useState<LiveAircraft[]>([]);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [flight, setFlight] = useState("BA117");
   const [statusRows, setStatusRows] = useState<StatusRow[]>([]);
   const [schedRows, setSchedRows] = useState<SchedRow[]>([]);
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusError, setStatusError] = useState("");
+
+  useEffect(() => {
+    try {
+      const f = new URLSearchParams(window.location.search).get("flight");
+      if (f && !flightInit) {
+        setFlight(f.toUpperCase());
+        setFlightInit(true);
+      }
+    } catch { /* non-browser — ignore */ }
+  }, [flightInit]);
 
   async function onLookup(e: React.FormEvent) {
     e.preventDefault();
