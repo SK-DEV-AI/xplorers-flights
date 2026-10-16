@@ -1,0 +1,19 @@
+# secrets — never commit
+app/.env.local
+app/.env*.local
+*.pem
+*.key
+
+# build output + deps
+app/node_modules/
+app/.next/
+app/out/
+.venv/
+__pycache__/
+*.pyc
+
+# scratch / local only
+review-login-fixed.png
+review-login-fixed.html
+make_pdf.py
+project-writeup.tex
