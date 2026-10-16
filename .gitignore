@@ -17,3 +17,5 @@ review-login-fixed.png
 review-login-fixed.html
 make_pdf.py
 project-writeup.tex
+app/next-env.d.ts
+app/tsconfig.tsbuildinfo
