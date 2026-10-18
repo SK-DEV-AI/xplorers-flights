@@ -164,8 +164,8 @@ function HomeInner() {
                 <div className="bubble agent">
                   <div className="typing" aria-label="Agent working"><span /><span /><span /></div>
                   <p className="busy-note">
-                    First search can take up to a minute while the airline feed loads — everything
-                    else answers in a couple of seconds.
+                    Live airline feeds are slow to answer — usually 20–30 seconds. Ask about weather,
+                    time or rates and I answer in about a second.
                   </p>
                 </div>
               </div>
@@ -176,6 +176,14 @@ function HomeInner() {
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  const q = input;
+                  setInput("");
+                  void send(q);
+                }
+              }}
               placeholder="SFO to Tokyo for 2 adults"
               aria-label="Ask the agent"
             />

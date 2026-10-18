@@ -131,6 +131,20 @@ export async function parseWithProxy(q: string): Promise<{ slots: CopilotSlots; 
   const model = process.env.COPILOT_MODEL ?? "big-pickle";
   const key = process.env.COPILOT_API_KEY ?? "local-dev-key";
   const fb = fallbackParse(q);
+
+  // Fast path: a plain "SFO to HND" request parses perfectly well without the
+  // model. Skipping the round trip removes ~8s from the first search, which was
+  // measured at 28s end to end (audit16). We only call the model when the local
+  // parse is unsure, so intent-heavy questions still get real understanding.
+  const plainRouteSearch =
+    fb.intent === "search" &&
+    fb.origin !== null &&
+    fb.destination !== null &&
+    !/\b(weather|status|schedule|rate|exchange|currency|time|nonstop|non-stop|under|cheapest|business|premium|first|class|direct|fly|price|cost)\b/i.test(q);
+  if (plainRouteSearch) {
+    return { slots: fb, via: "local" };
+  }
+
   try {
     const res = await fetch(`${base}/chat/completions`, {
       method: "POST",

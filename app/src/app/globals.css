@@ -337,7 +337,8 @@ a { transition: color 0.12s ease; }
   to { opacity: 0; visibility: hidden; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #loader { display: none; }
+  #loader { display: none !important; }
+  #loader, #loader svg { animation: none !important; }
 }
 
 /* Skeleton shimmer for loading states. */

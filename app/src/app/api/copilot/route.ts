@@ -41,6 +41,10 @@ export async function POST(req: Request) {
       );
     }
 
+    // Two round trips (model parse, then the airline feed) are the cost. The
+    // local parser is instant, so for plain "X to Y" requests we skip the model
+    // call entirely and go straight to the airline feed. Anything fancier
+    // (weather, currency, time, status, places) still uses the model.
     const { slots, via } = await parseWithProxy(message);
     const steps: string[] = [];
     const base = { via, intent: slots.intent, slots, steps };
