@@ -74,8 +74,11 @@ export async function flightStatus(flightIata: string, limit = 3): Promise<Fligh
   if (!res.ok) throw new Error(`Flight status unavailable (${res.status}).`);
   const json = (await res.json()) as { data?: AviationstackFlight[]; error?: { message?: string } };
   if (json.error) throw new Error(json.error.message ?? "Flight status unavailable.");
+  // Return ONLY exact matches. Falling back to the raw feed would re-introduce
+  // the original bug: typing BA117 and seeing AA6930/AS5255/IB3545 presented
+  // as the answer. An empty result is honest; a wrong flight is not.
   const exact = (json.data ?? []).filter(
     (f) => (f.flight?.iata ?? "").toUpperCase().replace(/\s+/g, "") === clean,
   );
-  return (exact.length > 0 ? exact : (json.data ?? [])).slice(0, limit).map(toStatus);
+  return exact.slice(0, limit).map(toStatus);
 }

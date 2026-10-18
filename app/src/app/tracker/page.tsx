@@ -6,6 +6,14 @@ import type { AirportInfo, LiveAircraft } from "@/lib/aviation/keyless";
 
 const LiveMap = dynamic(() => import("./LiveMap"), { ssr: false });
 
+/** Carrier IATA prefix -> the airport we fly out of. Used to paint the map
+ *  when the user arrives from a "Track NN live" link. */
+const AIRPORT_BY_IATA: Record<string, string> = {
+  BA: "LHR", AA: "JFK", DL: "ATL", UA: "ORD", AS: "SEA", B6: "JFK",
+  EK: "DXB", QR: "DXB", SQ: "SIN", AI: "DEL", "6E": "MAA", KL: "AMS",
+  LH: "FRA", AF: "CDG", IB: "MAD", QF: "SYD", AC: "YYZ", CX: "HKG",
+};
+
 interface Weather {
   temp: number;
   label: string;
@@ -66,9 +74,36 @@ export default function TrackerPage() {
   }, [flightInit]);
 
   useEffect(() => {
-    if (flightInit) void runStatus(flight);
+    if (flightInit) {
+      void runStatus(flight);
+      // Paint the map too: use the flight's departure airport when we can,
+      // falling back to the default so the page is never blank.
+      const origin = flight.slice(0, 2);
+      const guess = AIRPORT_BY_IATA[origin];
+      void lookupAirport(guess ? guess : "JFK");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flightInit]);
+
+  /** Wraps onLookup so the autoload path reuses the same fetch sequence. */
+  async function lookupAirport(target: string) {
+    try {
+      const res = await fetch(`/api/airports?code=${encodeURIComponent(target)}`);
+      const json = await res.json();
+      if (!res.ok) return;
+      setAirport(json);
+      const [tRes, wRes] = await Promise.all([
+        fetch(`/api/traffic?lat=${json.latitude}&lon=${json.longitude}&radius=50`),
+        fetch(`/api/weather?lat=${json.latitude}&lon=${json.longitude}`),
+      ]);
+      const tJson = await tRes.json();
+      if (tRes.ok) setTraffic(tJson.aircraft ?? []);
+      const wJson = await wRes.json();
+      if (wRes.ok) setWeather(wJson);
+    } catch {
+      /* a failed map lookup must not break the status rows */
+    }
+  }
 
   async function onLookup(e: React.FormEvent) {
     e.preventDefault();

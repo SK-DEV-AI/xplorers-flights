@@ -20,15 +20,26 @@ import { lookupAirport } from "@/lib/aviation/keyless";
 
 const DEFAULT_DATE = "2026-11-14";
 
-function fail(message: string, status = 200) {
-  return NextResponse.json({ reply: message, steps: [], ok: false }, { status });
+/** A failure envelope: always carries a human-readable reply. */
+function failBody(message: string) {
+  return { reply: message, ok: false as const };
+}
+
+/** Send a failure with the shared envelope merged in. */
+function fail(base: Record<string, unknown>, message: string, status = 200) {
+  return NextResponse.json({ ...base, ...failBody(message) }, { status });
 }
 
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as { message?: string };
     const message = (body.message ?? "").trim();
-    if (!message) return fail("Tell me where you want to fly, or ask me anything about a flight.");
+    if (!message) {
+      return NextResponse.json(
+        { via: "none", intent: "unknown", steps: [], ...failBody("Tell me where you want to fly, or ask about weather, time, rates, or a flight number.") },
+        { status: 400 },
+      );
+    }
 
     const { slots, via } = await parseWithProxy(message);
     const steps: string[] = [];
@@ -37,7 +48,7 @@ export async function POST(req: Request) {
     switch (slots.intent) {
       case "status": {
         const code = slots.flightNo;
-        if (!code) return NextResponse.json({ ...base, ...fail("Which flight? Give me a number like BA117.") });
+        if (!code) return fail(base, "Which flight? Give me a number like BA117.");
         steps.push(`Looking up live status for ${code}…`);
         try {
           const rows = await flightStatus(code, 3);
@@ -53,13 +64,13 @@ export async function POST(req: Request) {
               : `No live status for ${code} yet — it may not have departed.`,
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(err instanceof Error ? err.message : "Status lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Status lookup failed.");
         }
       }
 
       case "schedule": {
         const code = slots.flightNo;
-        if (!code) return NextResponse.json({ ...base, ...fail("Which flight's schedule? Try BA117.") });
+        if (!code) return fail(base, "Which flight's schedule? Try BA117.");
         const date = slots.departureDate ?? new Date().toISOString().slice(0, 10);
         steps.push(`Fetching the ${code} schedule for ${date}…`);
         try {
@@ -76,7 +87,7 @@ export async function POST(req: Request) {
               : `No schedule found for ${code} on ${date}.`,
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(err instanceof Error ? err.message : "Schedule lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Schedule lookup failed.");
         }
       }
 
@@ -85,7 +96,7 @@ export async function POST(req: Request) {
         const city = slots.place;
         steps.push(code ? `Checking conditions near ${code}…` : city ? `Checking the forecast for ${city}…` : "Checking the forecast…");
         const coords = await resolveCoords(code, city);
-        if (!coords) return NextResponse.json({ ...base, ...fail("Which place? Name a city or airport code.") });
+        if (!coords) return fail(base, "Which place? Name a city or airport code.");
         try {
           const url =
             `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}` +
@@ -116,14 +127,14 @@ export async function POST(req: Request) {
               (json.current?.wind_speed_10m != null ? `, wind ${json.current.wind_speed_10m} km/h.` : "."),
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(err instanceof Error ? err.message : "Weather lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Weather lookup failed.");
         }
       }
 
       case "time": {
         const zone = slots.timezone ?? zoneFor(slots.airport ?? slots.origin ?? slots.destination ?? slots.place);
         steps.push(`Checking local time${zone ? ` in ${zone}` : ""}…`);
-        if (!zone) return NextResponse.json({ ...base, ...fail("Where? Name a city or airport.") });
+        if (!zone) return fail(base, "Where? Name a city or airport.");
         try {
           const res = await fetch(`https://timeapi.io/api/time/current/zone?timeZone=${encodeURIComponent(zone)}`, {
             next: { revalidate: 60 },
@@ -137,7 +148,7 @@ export async function POST(req: Request) {
             reply: `Local time in ${slots.place ?? slots.airport ?? zone} is ${json.time ?? "—"} (${zone}).`,
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(err instanceof Error ? err.message : "Time lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Time lookup failed.");
         }
       }
 
@@ -161,13 +172,13 @@ export async function POST(req: Request) {
               : `No rate available for ${from} → ${to}.`,
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(err instanceof Error ? err.message : "Rate lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Rate lookup failed.");
         }
       }
 
       case "places": {
         const q = slots.place ?? slots.airport ?? slots.destination;
-        if (!q) return NextResponse.json({ ...base, ...fail("Where? Name a city or airport.") });
+        if (!q) return fail(base, "Where? Name a city or airport.");
         steps.push(`Looking up places near ${q}…`);
         try {
           const res = await fetch(
@@ -185,7 +196,7 @@ export async function POST(req: Request) {
               : `Nothing found for "${q}".`,
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(err instanceof Error ? err.message : "Place lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Place lookup failed.");
         }
       }
 
@@ -193,10 +204,7 @@ export async function POST(req: Request) {
       case "unknown":
       default: {
         if (!slots.origin || !slots.destination) {
-          return NextResponse.json({
-            ...base,
-            ...fail("Which airports? Try “SFO to Tokyo for 2 adults”, or tap Do it yourself to set it manually."),
-          });
+          return fail(base, "Which airports? Try “SFO to Tokyo for 2 adults”, or tap Do it yourself to set it manually.");
         }
         const date = slots.departureDate ?? DEFAULT_DATE;
         steps.push(`Searching ${slots.origin} → ${slots.destination} on ${date} for ${slots.passengers}…`);
@@ -213,20 +221,24 @@ export async function POST(req: Request) {
             ...base,
             ok: true,
             totalOffers: offers.length,
-            offers: offers.slice(0, 3),
-            allOffers: offers,
+            // Send the full list so the chat can render "show more"; the
+            // client decides how many to show at first.
+            offers: offers.slice(0, 25),
             reply: offers.length
               ? `${offers.length} option${offers.length === 1 ? "" : "s"} from ${slots.origin} to ${slots.destination}.` +
                 (top ? ` Best is ${top.airline} ${top.flightNo} at ${top.price} ${top.currency}.` : "")
               : `Nothing found on ${slots.origin} → ${slots.destination} for ${date}. Try another date or nearby airport.`,
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(err instanceof Error ? err.message : "Search failed.") });
+          return fail(base, err instanceof Error ? err.message : "Search failed.");
         }
       }
     }
   } catch {
-    return NextResponse.json({ error: "Something went wrong on my side. Try again." }, { status: 500 });
+    return NextResponse.json(
+      { via: "none", intent: "unknown", steps: [], ...failBody("Something went wrong on my side. Please try again."), error: "Something went wrong on my side." },
+      { status: 500 },
+    );
   }
 }
 
