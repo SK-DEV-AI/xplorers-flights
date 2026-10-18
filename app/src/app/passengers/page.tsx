@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 /**
  * Passenger page. Ports the Stitch "Passenger Details & Confirmation"
@@ -21,12 +22,20 @@ interface Form {
 
 const EMPTY: Form = { givenName: "", familyName: "", bornOn: "", email: "", phone: "" };
 
-export default function PassengerPage() {
+function PassengerPageInner() {
+  const params = useSearchParams();
   const [offerId, setOfferId] = useState("");
   const [forms, setForms] = useState<Form[]>([{ ...EMPTY }]);
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // The review modal hands off with ?offer=... (audit S6: the booking path
+  // was unreachable from any offer).
+  useEffect(() => {
+    const o = params.get("offer");
+    if (o) setOfferId(o);
+  }, [params]);
 
   function setField(i: number, k: keyof Form, v: string) {
     setForms((prev) => prev.map((f, j) => (j === i ? { ...f, [k]: v } : f)));
@@ -76,7 +85,19 @@ export default function PassengerPage() {
           <input id="offer" className="mono" value={offerId} onChange={(e) => setOfferId(e.target.value)} placeholder="off_0000…" required />
           {forms.map((f, i) => (
             <div key={i} style={{ borderTop: "1px solid var(--line)", marginTop: 12, paddingTop: 12 }}>
-              <h2 style={{ fontSize: 18 }}>Passenger {i + 1}</h2>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <h2 style={{ fontSize: 18, margin: 0 }}>Passenger {i + 1}</h2>
+                {forms.length > 1 && (
+                  <button
+                    type="button"
+                    className="ghost"
+                    style={{ width: "auto", marginTop: 0, padding: "5px 12px", fontSize: 12 }}
+                    onClick={() => setForms((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
               <div className="row">
                 <div>
                   <label htmlFor={`gn-${i}`}>Given name</label>
@@ -114,5 +135,14 @@ export default function PassengerPage() {
         {result !== "" && <div className="notice" style={{ borderStyle: "solid" }}>{result}</div>}
       </section>
     </>
+  );
+}
+
+/** useSearchParams needs a Suspense boundary during prerender. */
+export default function PassengerPage() {
+  return (
+    <Suspense fallback={<section className="card"><div className="shimmer" style={{ height: 200, borderRadius: 8 }} /></section>}>
+      <PassengerPageInner />
+    </Suspense>
   );
 }

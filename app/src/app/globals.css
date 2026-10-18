@@ -353,3 +353,81 @@ a { transition: color 0.12s ease; }
 @media (prefers-reduced-motion: reduce) {
   .shimmer { animation: none; background: var(--line); }
 }
+
+/* ===== Narrow-viewport nav (audit C1) ===== */
+@media (max-width: 860px) {
+  .nav { gap: 10px 14px; }
+  .nav a { font-size: 13px; }
+}
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; gap: 8px; }
+  .nav { width: 100%; order: 2; justify-content: flex-start; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .nav a { white-space: nowrap; }
+  .pill { display: none; }
+}
+/* ===== Visually hidden utility (audit S2) ===== */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; border: 0; padding: 0; margin: -1px;
+}
+/* ===== Contrast fixes (audit N2) ===== */
+.discover-kicker { color: var(--muted); opacity: 1; }
+.mono { color: var(--ink); }
+.muted { color: #4a5568; }
+/* ===== Dialog element styling (audit S7) ===== */
+dialog.modal {
+  border: 0; padding: 0; background: transparent; max-width: none; max-height: none;
+  width: 100%; height: 100%; margin: 0;
+}
+dialog.modal::backdrop { background: rgba(15, 23, 42, 0.4); }
+dialog.modal > .modal-card { margin: auto; max-width: 520px; width: calc(100% - 40px); animation: pop-in 0.28s cubic-bezier(0.22, 1.2, 0.36, 1) both; }
+
+/* ===== Home layout (minimal, OpenAI-inspired restraint) ===== */
+.home-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; padding: 26px 0 14px;
+}
+.home-title { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.home-head .mode-toggle { animation: rise 0.4s ease-out both; }
+
+.power { margin-top: 14px; }
+.power-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.power-check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; margin: 0; font-weight: 500; }
+.power-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.power-range { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; margin: 0; font-weight: 500; }
+.power-range input { width: 180px; padding: 0; }
+
+.journey { margin-top: 14px; }
+.journey-title { font-size: 14px; color: var(--muted); font-weight: 600; margin: 0 0 10px; }
+.journey-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.journey-grid .discover-card { padding: 14px 16px; }
+.journey-grid .discover-title { font-size: 15px; margin-top: 0; }
+.journey-grid p { font-size: 13px; margin: 4px 0 0; }
+@media (max-width: 760px) { .journey-grid { grid-template-columns: 1fr; } }
+
+.more-btn { width: auto !important; margin-top: 0 !important; font-size: 13px !important; padding: 8px 16px !important; }
+.bubble-hint { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
+.plain-list { margin: 8px 0 0; padding-left: 18px; font-size: 14px; color: var(--muted); }
+.syn-cta {
+  display: inline-flex; align-items: center; width: auto !important;
+  margin-top: 0 !important; padding: 9px 18px !important; font-size: 14px !important;
+  text-decoration: none; font-weight: 600;
+}
+.syn-cta.ghost { background: var(--card); color: var(--muted); border: 1px solid var(--line); }
+.syn-cta.ghost:hover { color: var(--ink); border-color: var(--accent); }
+.chat-chips { padding: 0 22px 20px; }
+@media (prefers-reduced-motion: reduce) {
+  .home-head .mode-toggle { animation: none; }
+}
+.sample-details { margin-top: 16px; }
+.sample-details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.sample-details summary:hover { color: var(--accent); }
+.transcript-log { max-height: 56vh; }
+.bubble-row.agent .bubble, .bubble-row.user .bubble, .bubble.agent, .bubble.user { max-width: 82%; }
+.busy-note { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+
+/* Chat log should scroll internally, never grow the page (audit: tall chat
+   pushed the header off-screen and created a double scrollbar). */
+.chat-log { max-height: min(56vh, 560px); overflow-y: auto; }
+.chat-shell { display: flex; flex-direction: column; }

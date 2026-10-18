@@ -28,8 +28,21 @@ export async function POST(req: Request) {
     const result = await getProvider().createOrder(input.offerId, input.passengers);
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Booking failed.";
-    const status = message.startsWith("Booking is disabled") ? 403 : 400;
-    return NextResponse.json({ error: message }, { status });
+    // The booking-disabled message is ours and is safe to show verbatim.
+    // Everything else (Zod issues, Duffel payloads) must not reach the UI.
+    if (err instanceof Error && err.name === "ZodError") {
+      return NextResponse.json(
+        { error: "Some passenger details are missing or invalid. Check name, date of birth, email and phone." },
+        { status: 400 },
+      );
+    }
+    const raw = err instanceof Error ? err.message : "";
+    if (raw.startsWith("Booking is disabled")) {
+      return NextResponse.json({ error: raw }, { status: 403 });
+    }
+    return NextResponse.json(
+      { error: "We could not complete that booking. Nothing was charged — please try again." },
+      { status: 502 },
+    );
   }
 }

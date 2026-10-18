@@ -29,7 +29,7 @@ interface DuffelOffer {
   owner?: { name?: string };
   slices?: Array<{
     segments?: Array<{
-      operating_carrier?: { name?: string };
+      operating_carrier?: { name?: string; iata_code?: string };
       operating_carrier_flight_number?: string;
       origin?: { iata_code?: string };
       destination?: { iata_code?: string };
@@ -49,6 +49,7 @@ function toOffer(o: DuffelOffer): FlightOffer {
   return {
     id: o.id,
     airline: seg?.operating_carrier?.name ?? o.owner?.name ?? "Duffel Airways",
+    airlineIata: seg?.operating_carrier?.iata_code ?? "",
     flightNo: seg?.operating_carrier_flight_number ?? "—",
     origin: seg?.origin?.iata_code ?? "",
     destination: seg?.destination?.iata_code ?? "",

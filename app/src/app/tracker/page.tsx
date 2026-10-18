@@ -53,6 +53,8 @@ export default function TrackerPage() {
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusError, setStatusError] = useState("");
 
+  // A ?flight= link must actually run the lookup, not just fill the box
+  // (audit C2: "Track it live" left an empty panel).
   useEffect(() => {
     try {
       const f = new URLSearchParams(window.location.search).get("flight");
@@ -61,6 +63,11 @@ export default function TrackerPage() {
         setFlightInit(true);
       }
     } catch { /* non-browser — ignore */ }
+  }, [flightInit]);
+
+  useEffect(() => {
+    if (flightInit) void runStatus(flight);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flightInit]);
 
   async function onLookup(e: React.FormEvent) {
@@ -91,8 +98,7 @@ export default function TrackerPage() {
     }
   }
 
-  async function onStatus(e: React.FormEvent) {
-    e.preventDefault();
+  async function runStatus(code: string) {
     setStatusBusy(true);
     setStatusError("");
     setStatusRows([]);
@@ -100,8 +106,8 @@ export default function TrackerPage() {
     try {
       const today = new Date().toISOString().slice(0, 10);
       const [sRes, cRes] = await Promise.all([
-        fetch(`/api/flight-status?flight=${encodeURIComponent(flight)}`),
-        fetch(`/api/schedules?flight=${encodeURIComponent(flight)}&date=${today}`),
+        fetch(`/api/flight-status?flight=${encodeURIComponent(code)}`),
+        fetch(`/api/schedules?flight=${encodeURIComponent(code)}&date=${today}`),
       ]);
       const sJson = await sRes.json();
       if (!sRes.ok) throw new Error(sJson.error ?? "Status unavailable.");
@@ -113,6 +119,11 @@ export default function TrackerPage() {
     } finally {
       setStatusBusy(false);
     }
+  }
+
+  function onStatus(e: React.FormEvent) {
+    e.preventDefault();
+    void runStatus(flight);
   }
 
   return (

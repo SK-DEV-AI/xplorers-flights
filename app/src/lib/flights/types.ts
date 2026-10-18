@@ -14,6 +14,8 @@ export type SearchInput = z.infer<typeof SearchInput>;
 export interface FlightOffer {
   id: string;
   airline: string;
+  /** Airline IATA code (BA, AA, ...) — needed to build trackable flight numbers. */
+  airlineIata: string;
   flightNo: string;
   origin: string;
   destination: string;

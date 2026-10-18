@@ -24,6 +24,18 @@ export default function LiveMap({
     (async () => {
       const L = await import("leaflet");
       await import("leaflet/dist/leaflet.css");
+      // Bundlers do not copy Leaflet's default marker images to the site
+      // root, so point Leaflet at the bundled assets explicitly (audit N3:
+      // marker-icon.png 404'd on every tracker load).
+      const [icon, shadow] = await Promise.all([
+        import("leaflet/dist/images/marker-icon.png"),
+        import("leaflet/dist/images/marker-shadow.png"),
+      ]);
+      L.Icon.Default.mergeOptions({
+        iconUrl: (icon as unknown as { default: { src: string } }).default.src,
+        iconRetinaUrl: (icon as unknown as { default: { src: string } }).default.src,
+        shadowUrl: (shadow as unknown as { default: { src: string } }).default.src,
+      });
       if (!divRef.current || mapRef.current || cancelled) return;
       const map = L.map(divRef.current).setView(center, 8);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

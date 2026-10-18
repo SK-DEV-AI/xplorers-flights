@@ -64,12 +64,18 @@ export async function flightStatus(flightIata: string, limit = 3): Promise<Fligh
   if (!key) throw new Error("AVIATIONSTACK_KEY is not set. Add it to .env.local.");
   const clean = flightIata.trim().toUpperCase().replace(/\s+/g, "");
   if (!/^[A-Z0-9]{2,7}$/.test(clean)) throw new Error("Enter a flight number like BA117.");
+  // Free tier returns a broad LHR->JFK feed and does NOT reliably filter on
+  // flight_iata, so we ask for a wider page and filter client-side to the
+  // exact requested flight (audit S3: BA117 returned AA6930/AS5255/IB3545).
   const url =
     `https://api.aviationstack.com/v1/flights?access_key=${encodeURIComponent(key)}` +
-    `&flight_iata=${encodeURIComponent(clean)}&limit=${limit}`;
+    `&flight_iata=${encodeURIComponent(clean)}&limit=10`;
   const res = await fetch(url, { next: { revalidate: 120 } });
   if (!res.ok) throw new Error(`Flight status unavailable (${res.status}).`);
   const json = (await res.json()) as { data?: AviationstackFlight[]; error?: { message?: string } };
   if (json.error) throw new Error(json.error.message ?? "Flight status unavailable.");
-  return (json.data ?? []).map(toStatus);
+  const exact = (json.data ?? []).filter(
+    (f) => (f.flight?.iata ?? "").toUpperCase().replace(/\s+/g, "") === clean,
+  );
+  return (exact.length > 0 ? exact : (json.data ?? [])).slice(0, limit).map(toStatus);
 }
