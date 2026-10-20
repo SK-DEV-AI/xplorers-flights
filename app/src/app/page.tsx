@@ -17,11 +17,27 @@ import type { FlightOffer } from "@/lib/flights/types";
  */
 
 const PROMPTS = [
-  { text: "SFO to Tokyo for 2 adults", hint: "search" },
-  { text: "What is the weather in Tokyo?", hint: "weather" },
-  { text: "What's the local time in London?", hint: "time" },
-  { text: "Status of BA117", hint: "status" },
-  { text: "1 USD to INR", hint: "currency" },
+  "SFO to Tokyo for 2 adults",
+  "Weather in Tokyo right now",
+  "Air quality in Delhi",
+  "Local time in London",
+  "1 USD to INR",
+  "Status of BA117",
+  "Sunrise time in Mumbai",
+  "Any earthquakes today?",
+];
+
+const CAPABILITIES = [
+  { icon: "\u2708", title: "Find flights", example: "SFO to Tokyo for 2 adults" },
+  { icon: "\u2713", title: "Track a flight", example: "Status of BA117" },
+  { icon: "\u2600", title: "Weather", example: "Weather in Tokyo" },
+  { icon: "\u25c9", title: "Air quality", example: "Air quality in Delhi" },
+  { icon: "\u25d4", title: "Sunrise & sunset", example: "Sunset in Mumbai" },
+  { icon: "\u25b2", title: "Earthquakes", example: "Any quakes today?" },
+  { icon: "\u29c9", title: "Exchange rates", example: "1 USD to INR" },
+  { icon: "\u29c9", title: "Local time", example: "Time in London" },
+  { icon: "\u2313", title: "Places nearby", example: "Places near Heathrow" },
+  { icon: "\u25c9", title: "Live radar", example: "Open the radar" },
 ];
 
 interface ToolRun {
@@ -32,6 +48,9 @@ interface ToolRun {
   flights?: Array<{ flightNo: string; airline: string; status: string; departure: string; arrival: string; delayMin: number | null }>;
   legs?: Array<{ flightNo: string | null; origin: string; destination: string; scheduledUtc: string | null; distanceKm: number | null }>;
   weather?: { label: string; temp: number; code?: number; wind?: number; high?: number; low?: number };
+  airQuality?: { label: string; pm25: number | null; usAqi: number | null; band: string };
+  sun?: { label: string; sunrise: string | null; sunset: string | null; dayLength: string | null };
+  quakes?: Array<{ magnitude: number | null; place: string; timeIso: string | null }>;
   places?: Array<{ name: string; displayName: string }>;
   rate?: { base: string; quote: string; value: number; date: string };
   time?: { time: string; zone: string };
@@ -115,6 +134,9 @@ function HomeInner() {
           flights: json.flights,
           legs: json.legs,
           weather: json.weather,
+          airQuality: json.airQuality,
+          sun: json.sun,
+          quakes: json.quakes,
           places: json.places,
           rate: json.rate,
           time: json.time,
@@ -194,17 +216,41 @@ function HomeInner() {
           <div className="chip-row chat-chips">
             {PROMPTS.map((p) => (
               <button
-                key={p.text}
+                key={p}
                 type="button"
                 className="chip"
-                onClick={() => { inputRef.current?.focus(); setInput(p.text); }}
+                onClick={() => { inputRef.current?.focus(); setInput(p); }}
               >
-                {p.text}
+                {p}
               </button>
             ))}
           </div>
         </section>
       )}
+
+      {/* What this can do — plain language, so nobody has to guess. */}
+      <details className="card capabilities fade-up">
+        <summary>
+          <span className="cap-summary-title">What I can do</span>
+          <span className="cap-summary-sub">Everything below runs on real, free public data</span>
+        </summary>
+        <div className="cap-grid">
+          {CAPABILITIES.map((c) => (
+            <button
+              key={c.title}
+              type="button"
+              className="cap-item"
+              onClick={() => { inputRef.current?.focus(); setInput(c.example); }}
+            >
+              <span className="cap-icon" aria-hidden="true">{c.icon}</span>
+              <span className="cap-body">
+                <span className="cap-title">{c.title}</span>
+                <span className="cap-example">try: {c.example}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </details>
 
       {/* Power tools — the same data, one click from the conversation. */}
       <section className="card power fade-up" aria-label="Filter and track tools">
@@ -224,6 +270,14 @@ function HomeInner() {
       <section className="card journey fade-up" aria-label="Your journey so far">
         <h2 className="journey-title">Journey</h2>
         <div className="journey-grid">
+          <Link className="discover-card" href="/radar">
+            <div className="discover-title">Live radar</div>
+            <p>Every aircraft in the sky right now, on a radar scope.</p>
+          </Link>
+          <Link className="discover-card" href="/tracker">
+            <div className="discover-title">Track a flight</div>
+            <p>Airport maps, aircraft nearby, status and schedules.</p>
+          </Link>
           <Link className="discover-card" href="/passengers">
             <div className="discover-title">Passenger details</div>
             <p>Names and dates — checked before anything is booked.</p>
@@ -235,6 +289,10 @@ function HomeInner() {
           <Link className="discover-card" href="/copilot">
             <div className="discover-title">Agent transcript</div>
             <p>Every tool call, step by step, for review.</p>
+          </Link>
+          <Link className="discover-card" href="/bookings">
+            <div className="discover-title">My bookings</div>
+            <p>Tickets and references once a booking exists.</p>
           </Link>
         </div>
       </section>
@@ -340,6 +398,37 @@ function Bubble({
               {m.weather.temp}°C{m.weather.high != null ? ` · high ${m.weather.high}° / low ${m.weather.low}°` : ""}{m.weather.wind != null ? ` · wind ${m.weather.wind} km/h` : ""}
             </div>
           </div>
+        )}
+
+        {m.airQuality && (
+          <div className="mini-offer">
+            <div className="route">{m.airQuality.label}</div>
+            <div className="meta">
+              Air quality: {m.airQuality.band}
+              {m.airQuality.usAqi != null ? ` · AQI ${m.airQuality.usAqi}` : ""}
+              {m.airQuality.pm25 != null ? ` · PM2.5 ${m.airQuality.pm25} µg/m³` : ""}
+            </div>
+          </div>
+        )}
+
+        {m.sun && (
+          <div className="mini-offer">
+            <div className="route">{m.sun.label}</div>
+            <div className="meta">
+              Sunrise {m.sun.sunrise ?? "—"} · Sunset {m.sun.sunset ?? "—"}
+              {m.sun.dayLength ? ` · ${m.sun.dayLength} of daylight` : ""}
+            </div>
+          </div>
+        )}
+
+        {m.quakes && m.quakes.length > 0 && (
+          <ul className="plain-list">
+            {m.quakes.map((q, i) => (
+              <li key={i}>
+                {q.magnitude != null ? `M${q.magnitude.toFixed(1)}` : "—"} · {q.place}
+              </li>
+            ))}
+          </ul>
         )}
 
         {m.rate && (

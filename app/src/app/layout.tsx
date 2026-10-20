@@ -31,6 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <nav className="nav">
               <Link href="/">Search</Link>
               <Link href="/copilot">Copilot</Link>
+              <Link href="/radar">Radar</Link>
               <Link href="/tracker">Tracker</Link>
               <Link href="/passengers">Passengers</Link>
               <Link href="/bookings">Bookings</Link>

@@ -13,6 +13,9 @@ export type CopilotIntent =
   | "status"
   | "schedule"
   | "weather"
+  | "airquality"
+  | "sun"
+  | "earthquake"
   | "currency"
   | "time"
   | "places"
@@ -49,28 +52,31 @@ export function cityToIata(name: string): string | null {
   return CITY_TO_IATA[t] ?? null;
 }
 
-const SYSTEM = `You are the intent + slot parser for a flight booking agent.
+const SYSTEM = `You are the intent + slot parser for a flight and airport-journey agent.
 Given ONE user message, reply with ONLY compact JSON (no prose, no code fences) using exactly these keys:
 {"origin":null,"destination":null,"departureDate":null,"passengers":1,"cabinClass":"economy","intent":"search","flightNo":null,"place":null,"airport":null,"currencyFrom":null,"currencyTo":null,"timezone":null}
 
 Rules:
-- intent MUST be one of: search, status, schedule, weather, currency, time, places, unknown.
-  search   = wants to find/book flights (origin+destination given or inferable)
-  status   = asks about one flight's live status (flight number like BA117 present)
-  schedule = asks for a flight's schedule/timetable (flight number present)
-  weather  = asks weather, temperature, rain, forecast, or "can I fly" weather
-  currency = asks about exchange rates, price conversion, cost in another currency
-  time     = asks the local time / timezone at a destination or an airport
-  places   = asks what is at / near / around an airport or city (hotels, sights, food)
-  unknown  = genuinely unclear
+- intent MUST be one of: search, status, schedule, weather, airquality, sun, earthquake, currency, time, places, unknown.
+  search     = find or book flights (origin + destination)
+  status     = one flight's live status (flight number like BA117 present)
+  schedule   = one flight's schedule or timetable (flight number present)
+  weather    = weather, temperature, rain, storm, forecast
+  airquality = air quality, pollution, AQI, PM2.5, smog
+  sun        = sunrise, sunset, daylight hours, golden hour
+  earthquake = earthquakes, quakes, tremors, seismic activity
+  currency   = exchange rates, currency conversion
+  time       = local time, time zone
+  places     = what is near / around an airport or city
+  unknown    = genuinely unclear
 - origin/destination: 3-letter IATA uppercase or null. Map cities: Tokyo->HND, London->LHR,
   Paris->CDG, New York->JFK, San Francisco->SFO, Los Angeles->LAX, Mumbai->BOM, Delhi->DEL,
-  Chennai->MAA, Dubai->DXB, Singapore->SIN.
+  Chennai->MAA, Dubai->DXB, Singapore->SIN, Bengaluru->BLR, Hyderabad->HYD.
 - departureDate: YYYY-MM-DD or null.
 - passengers: number (also accept the keys "adults" or "pax" if you emit them).
 - cabinClass: one of economy, premium_economy, business, first.
 - flightNo: flight number without space, uppercase, e.g. BA117. null otherwise.
-- place: city or place name for weather/places intents, e.g. "Tokyo". null otherwise.
+- place: city or place name for weather/airquality/sun/places intents, e.g. "Tokyo". null otherwise.
 - airport: airport code mentioned for weather/time intents, e.g. LHR, JFK, KJFK. null otherwise.
 - currencyFrom/currencyTo: 3-letter uppercase ISO codes, e.g. "USD","INR". null when not mentioned.
 - timezone: IANA zone when a city/country is clearly implied, e.g. "Asia/Kolkata". null otherwise.`;
@@ -98,17 +104,23 @@ function fallbackParse(q: string): CopilotSlots {
     ? /schedule|timetable/.test(t)
       ? "schedule"
       : "status"
-    : /weather|forecast|temperature|rain|storm/.test(t)
-      ? "weather"
-      : /rate|exchange|currency|convert|how much is .* in/.test(t)
-        ? "currency"
-        : /\btime\b|timezone|local time/.test(t)
-          ? "time"
-          : /near|around|at the airport|things to do|hotel|food|sight/.test(t)
-            ? "places"
-            : origin || destination
-              ? "search"
-              : "unknown";
+    : /air ?quality|pollution|\baqi\b|pm2\.5|smog/.test(t)
+      ? "airquality"
+      : /sunrise|sunset|daylight|golden hour/.test(t)
+        ? "sun"
+        : /earthquake|\bquake|tremor|seismic/.test(t)
+          ? "earthquake"
+          : /weather|forecast|temperature|rain|storm/.test(t)
+            ? "weather"
+            : /rate|exchange|currency|convert|how much is .* in/.test(t)
+              ? "currency"
+              : /\btime\b|timezone|local time/.test(t)
+                ? "time"
+                : /near|around|at the airport|things to do|hotel|food|sight/.test(t)
+                  ? "places"
+                  : origin || destination
+                    ? "search"
+                    : "unknown";
   return {
     origin,
     destination,
@@ -176,7 +188,10 @@ export async function parseWithProxy(q: string): Promise<{ slots: CopilotSlots; 
       return cityToIata(v);
     };
     const pax = parsed.passengers ?? parsed.adults ?? parsed.pax;
-    const intents: CopilotIntent[] = ["search", "status", "schedule", "weather", "currency", "time", "places", "unknown"];
+    const intents: CopilotIntent[] = [
+      "search", "status", "schedule", "weather", "airquality", "sun",
+      "earthquake", "currency", "time", "places", "unknown",
+    ];
     const intent = intents.includes(parsed.intent as CopilotIntent) ? (parsed.intent as CopilotIntent) : fb.intent;
     return {
       slots: {

@@ -156,6 +156,111 @@ export async function POST(req: Request) {
         }
       }
 
+      case "airquality": {
+        const code = slots.airport ?? slots.origin ?? slots.destination;
+        const city = slots.place;
+        steps.push(code ? `Checking air quality near ${code}…` : city ? `Checking air quality in ${city}…` : "Checking air quality…");
+        const coords = await resolveCoords(code, city);
+        if (!coords) return NextResponse.json({ ...base, ...fail(base, "Which place? Name a city or airport code.") });
+        try {
+          const url =
+            `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${coords.lat}&longitude=${coords.lon}` +
+            `&current=pm2_5,us_aqi,european_aqi`;
+          const res = await fetch(url, { next: { revalidate: 1800 } });
+          if (!res.ok) throw new Error("Air quality service is busy right now.");
+          const json = (await res.json()) as {
+            current?: { pm2_5?: number | null; us_aqi?: number | null; european_aqi?: number | null };
+          };
+          const aqi = json.current?.us_aqi ?? null;
+          const pm = json.current?.pm2_5 ?? null;
+          return NextResponse.json({
+            ...base,
+            ok: true,
+            airQuality: {
+              label: coords.label,
+              pm25: pm,
+              usAqi: aqi,
+              europeanAqi: json.current?.european_aqi ?? null,
+              band: aqiBand(aqi),
+            },
+            reply:
+              `Air quality in ${coords.label}: ${aqiBand(aqi)}` +
+              (aqi != null ? ` (AQI ${aqi})` : "") +
+              (pm != null ? `, PM2.5 ${pm} µg/m³.` : "."),
+          });
+        } catch (err) {
+          return NextResponse.json({ ...base, ...fail(base, err instanceof Error ? err.message : "Air quality lookup failed.") });
+        }
+      }
+
+      case "sun": {
+        const code = slots.airport ?? slots.origin ?? slots.destination;
+        const city = slots.place;
+        steps.push(code ? `Checking daylight hours at ${code}…` : city ? `Checking daylight hours in ${city}…` : "Checking daylight hours…");
+        const coords = await resolveCoords(code, city);
+        if (!coords) return NextResponse.json({ ...base, ...fail(base, "Which place? Name a city or airport code.") });
+        try {
+          const url =
+            `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}` +
+            `&daily=sunrise,sunset&timezone=auto`;
+          const res = await fetch(url, { next: { revalidate: 3600 } });
+          if (!res.ok) throw new Error("Sun service is busy right now.");
+          const json = (await res.json()) as {
+            daily?: { sunrise?: string[]; sunset?: string[] };
+            utc_offset_seconds?: number;
+          };
+          const sunrise = json.daily?.sunrise?.[0] ?? null;
+          const sunset = json.daily?.sunset?.[0] ?? null;
+          const length = dayLength(sunrise, sunset);
+          return NextResponse.json({
+            ...base,
+            ok: true,
+            sun: { label: coords.label, sunrise, sunset, dayLength: length },
+            reply:
+              `In ${coords.label}, sunrise is ${clock(sunrise)} and sunset is ${clock(sunset)}` +
+              (length ? ` — ${length} of daylight.` : "."),
+          });
+        } catch (err) {
+          return NextResponse.json({ ...base, ...fail(base, err instanceof Error ? err.message : "Sun lookup failed.") });
+        }
+      }
+
+      case "earthquake": {
+        steps.push("Checking seismic activity in the last day…");
+        try {
+          const res = await fetch("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson", {
+            next: { revalidate: 300 },
+          });
+          if (!res.ok) throw new Error("Seismic service is busy right now.");
+          const json = (await res.json()) as {
+            features?: Array<{
+              id: string;
+              properties?: { mag?: number | null; place?: string; time?: number };
+              geometry?: { coordinates?: number[] };
+            }>;
+          };
+          const quakes = (json.features ?? []).map((f) => ({
+            magnitude: f.properties?.mag ?? null,
+            place: f.properties?.place ?? "Unknown area",
+            timeIso: f.properties?.time ? new Date(f.properties.time).toISOString() : null,
+            lat: f.geometry?.coordinates?.[1] ?? null,
+            lon: f.geometry?.coordinates?.[0] ?? null,
+          }));
+          const strongest = quakes[0];
+          return NextResponse.json({
+            ...base,
+            ok: true,
+            quakes: quakes.slice(0, 6),
+            reply: quakes.length
+              ? `${quakes.length} earthquake${quakes.length === 1 ? "" : "s"} above 4.5 in the last day.` +
+                (strongest?.magnitude != null ? ` Strongest: magnitude ${strongest.magnitude} near ${strongest.place}.` : "")
+              : "No earthquakes above magnitude 4.5 in the last day.",
+          });
+        } catch (err) {
+          return NextResponse.json({ ...base, ...fail(base, err instanceof Error ? err.message : "Seismic lookup failed.") });
+        }
+      }
+
       case "currency": {
         const from = slots.currencyFrom ?? "USD";
         const to = slots.currencyTo ?? "INR";
@@ -291,6 +396,37 @@ function zoneFor(hint: string | null): string | null {
     dubai: "Asia/Dubai", singapore: "Asia/Singapore",
   };
   return Object.keys(known).find((k) => hint.toLowerCase().includes(k)) ? known[hint.toLowerCase().split(" ").find((k) => known[k]) ?? ""] ?? null : null;
+}
+
+function aqiBand(aqi: number | null): string {
+  if (aqi == null) return "unknown";
+  if (aqi <= 20) return "good";
+  if (aqi <= 40) return "moderate";
+  if (aqi <= 60) return "unhealthy for sensitive groups";
+  if (aqi <= 80) return "unhealthy";
+  if (aqi <= 100) return "very unhealthy";
+  return "hazardous";
+}
+
+/** "2026-10-20T06:34" -> "6:34 AM" */
+function clock(iso: string | null): string {
+  if (!iso) return "—";
+  const m = iso.match(/T(\d{2}):(\d{2})/);
+  if (!m) return iso;
+  const h = Number(m[1]);
+  const suffix = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${m[2]} ${suffix}`;
+}
+
+/** Difference between two ISO local times, as "12h 05m". */
+function dayLength(sunrise: string | null, sunset: string | null): string | null {
+  if (!sunrise || !sunset) return null;
+  const a = Date.parse(`${sunrise}Z`);
+  const b = Date.parse(`${sunset}Z`);
+  if (Number.isNaN(a) || Number.isNaN(b) || b <= a) return null;
+  const mins = Math.round((b - a) / 60000);
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
 }
 
 function wmo(code: number | undefined): string {
