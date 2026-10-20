@@ -12,15 +12,37 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <div id="loader" aria-hidden="true">
-          <svg viewBox="0 0 64 64" width="44" height="44">
-            <rect width="64" height="64" rx="14" fill="#1D4ED8" />
-            <path d="M14 16 L50 48" stroke="#fff" strokeWidth="5" strokeLinecap="round" />
-            <path d="M50 16 L14 48" stroke="#9DBCFF" strokeWidth="5" strokeLinecap="round" />
-            <circle cx="50" cy="16" r="4" fill="#fff" />
-          </svg>
-          <span>Xplorers Flights</span>
+        {/* Opening: a plane flies across and the site is revealed under
+            it. Pure CSS, no JS, and it never blocks interaction. */}
+        {/* A slow, soft light behind the page. Pure CSS, transform-only, so
+            it costs no repaints and never blocks a click. */}
+        <div className="aurora" aria-hidden="true">
+          <span className="aurora-blob aurora-1" />
+          <span className="aurora-blob aurora-2" />
+          <span className="aurora-blob aurora-3" />
+          <span className="aurora-grid" />
         </div>
+
+        <div className="flyby" aria-hidden="true">
+          <div className="flyby-veil" />
+          <div className="flyby-plane">
+            <span className="flyby-trail" />
+            <svg viewBox="0 0 64 64" width="120" height="120" className="flyby-icon">
+              <path
+                d="M56 20 L38 34 L14 44 L20 32 L8 26 L20 24 L28 12 L32 24 L48 16 Z"
+                fill="#1D4ED8"
+              />
+              <path
+                d="M56 20 L38 34 L14 44 L20 32 L8 26 L20 24 L28 12 L32 24 L48 16 Z"
+                fill="none"
+                stroke="#93C5FD"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+
         <div className="wrap">
           <header className="topbar">
             <Link className="brand" href="/">

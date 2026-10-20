@@ -156,9 +156,12 @@ button.ghost {
 .syn-link { color: var(--accent); font-size: 13px; font-weight: 600; text-decoration: none; }
 .syn-link:hover { text-decoration: underline; }
 .chat-chips { padding: 0 22px; }
-.chat-input { display: flex; gap: 8px; padding: 14px 22px 22px; }
-.chat-input input { flex: 1; }
-.chat-input .primary { width: auto; margin-top: 0; padding: 10px 26px; }
+.chat-input { display: flex; gap: 8px; padding: 14px 22px 22px; align-items: center; }
+.chat-input input { flex: 1 1 auto; min-width: 0; }
+.chat-input .primary {
+  width: auto; flex: 0 0 auto; margin-top: 0;
+  padding: 10px 26px; white-space: nowrap;
+}
 /* synergy strip */
 .synergy { margin-top: 20px; }
 .syn-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 12px; }
@@ -404,7 +407,8 @@ dialog.modal > .modal-card { margin: auto; max-width: 520px; width: calc(100% - 
 .journey-grid .discover-card { padding: 14px 16px; }
 .journey-grid .discover-title { font-size: 15px; margin-top: 0; }
 .journey-grid p { font-size: 13px; margin: 4px 0 0; }
-@media (max-width: 760px) { .journey-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .journey-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 620px) { .journey-grid { grid-template-columns: 1fr; } }
 
 .more-btn { width: auto !important; margin-top: 0 !important; font-size: 13px !important; padding: 8px 16px !important; }
 .bubble-hint { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
@@ -418,6 +422,8 @@ dialog.modal > .modal-card { margin: auto; max-width: 520px; width: calc(100% - 
 .syn-cta.ghost { background: var(--card); color: var(--muted); border: 1px solid var(--line); }
 .syn-cta.ghost:hover { color: var(--ink); border-color: var(--accent); }
 .chat-chips { padding: 0 22px 20px; }
+.chip-row { flex-wrap: wrap; }
+.chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {
   .home-head .mode-toggle { animation: none; }
 }
@@ -440,11 +446,18 @@ dialog.modal > .modal-card { margin: auto; max-width: 520px; width: calc(100% - 
   cursor: pointer; list-style: none; padding: 2px 0;
 }
 .capabilities > summary::-webkit-details-marker { display: none; }
+/* A clean CSS chevron drawn from borders. The old value used a "\\203A"
+   escape, which rendered as the literal text "\203A" instead of a glyph. */
 .capabilities > summary::before {
-  content: "\\203A"; color: var(--accent); font-weight: 700;
-  transition: transform 0.2s ease; display: inline-block;
+  content: "";
+  width: 8px; height: 8px; flex: none;
+  border-right: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(-45deg);
+  transition: transform 0.2s ease;
+  margin-right: 2px;
 }
-.capabilities[open] > summary::before { transform: rotate(90deg); }
+.capabilities[open] > summary::before { transform: rotate(45deg); }
 .cap-summary-title { font-weight: 700; font-size: 16px; }
 .cap-summary-sub { color: var(--muted); font-size: 13px; }
 .capabilities > summary:hover .cap-summary-title { color: var(--accent); }
@@ -527,4 +540,207 @@ dialog.modal > .modal-card { margin: auto; max-width: 520px; width: calc(100% - 
   .radar-stats { gap: 14px; }
   .radar-num { font-size: 19px; }
   .legend-note { margin-left: 0; }
+}
+
+/* ===== Radar link inside the capability panel ===== */
+.cap-radar {
+  display: flex; align-items: center; gap: 10px; text-decoration: none;
+  background: linear-gradient(120deg, #0b1a2e, #14304f);
+  border: 1px solid transparent; border-radius: 10px;
+  padding: 12px 14px; margin-top: 10px; color: #e2e8f0;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.cap-radar:hover {
+  transform: translateY(-2px);
+  border-color: rgba(147, 197, 253, 0.5);
+  box-shadow: 0 14px 30px -18px rgba(11, 26, 46, 0.9);
+}
+.cap-radar .cap-title { color: #fff; }
+.cap-radar .cap-example { color: #93c5fd; }
+.cap-radar .cap-icon { color: #7dd3fc; }
+.cap-arrow { margin-left: auto; color: #7dd3fc; font-size: 16px; }
+
+
+/* ===========================================================================
+   Opening: a plane flies across, revealing the site beneath it.
+   Pure CSS. The overlay never blocks clicks (pointer-events: none) and it
+   removes itself from the layout once the animation is done.
+   =========================================================================== */
+.flyby {
+  position: fixed; inset: 0; z-index: 90;
+  pointer-events: none; overflow: hidden;
+  animation: flyby-done 0s linear 1.35s forwards;
+}
+@keyframes flyby-done {
+  to { display: none; }
+}
+.flyby-veil {
+  position: absolute; inset: 0;
+  background: var(--paper);
+  animation: flyby-veil 0.62s cubic-bezier(0.55, 0, 0.25, 1) 0.06s forwards;
+}
+@keyframes flyby-veil {
+  0%   { clip-path: inset(0 0 0 0); opacity: 1; }
+  100% { clip-path: inset(0 0 0 100%); opacity: 1; }
+}
+.flyby-plane {
+  position: absolute; top: 34%; left: 0;
+  display: flex; align-items: center;
+  animation: flyby-cross 1.15s cubic-bezier(0.28, 0.7, 0.25, 1) forwards;
+  filter: drop-shadow(0 16px 26px rgba(29, 78, 216, 0.32));
+}
+.flyby-trail {
+  display: block; width: 320px; height: 3px; margin-right: -4px;
+  background: linear-gradient(90deg, rgba(147, 197, 253, 0) 0%, rgba(147, 197, 253, 0.9) 100%);
+  border-radius: 999px;
+  transform-origin: right center;
+  animation: flyby-trail 1.15s ease-out 0.08s both;
+}
+@keyframes flyby-trail {
+  from { transform: scaleX(0); opacity: 0; }
+  to   { transform: scaleX(1); opacity: 1; }
+}
+@keyframes flyby-cross {
+  0%   { transform: translate(-140px, 90px) rotate(-16deg); opacity: 0; }
+  12%  { opacity: 1; }
+  100% { transform: translate(108vw, -110px) rotate(12deg); opacity: 0; }
+}
+
+/* The page content rises into place behind the plane. The veil only fully
+   clears at ~0.55s, so the site must be readable well before the plane
+   finishes its pass — otherwise the opening feels like a wait. */
+.wrap { animation: page-in 0.42s cubic-bezier(0.22, 0.9, 0.3, 1) 0.12s both; }
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===========================================================================
+   Motion across the site: everything moves a little, nothing distracts.
+   =========================================================================== */
+
+/* The Sandbox pill pulses gently, like a live indicator. */
+.pill .dot { animation: live-pulse 2.4s ease-in-out infinite; }
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45); }
+  50%      { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+
+/* Nav links lift on hover. */
+.nav a { transition: color 0.15s ease, transform 0.15s ease; }
+.nav a:hover { transform: translateY(-1px); }
+
+/* The brand mark takes off slightly on hover. */
+.brand img { transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.brand:hover img { transform: translate(-2px, -2px) rotate(-8deg); }
+
+/* Cards lift and gain a soft shadow on hover. */
+.card {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.card:hover { border-color: #cbd5e1; box-shadow: 0 10px 28px -20px rgba(15, 23, 42, 0.4); }
+
+/* The primary button has a light sweep on hover. */
+button.primary { position: relative; overflow: hidden; }
+button.primary::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.28) 50%, transparent 80%);
+  transform: translateX(-100%);
+  transition: transform 0.5s ease;
+}
+button.primary:hover::after { transform: translateX(100%); }
+
+/* Range slider thumb gets a touch more presence. */
+input[type="range"] { accent-color: var(--accent); cursor: pointer; }
+
+/* The chat input grows a soft blue focus ring. */
+.chat-input input:focus,
+.card input:focus,
+.card select:focus {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+/* Scroll-linked reveal for the cards that scroll into view. */
+.reveal { will-change: opacity, transform; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flyby, .flyby-veil, .flyby-plane, .flyby-trail { animation: none !important; display: none; }
+  .wrap { animation: none !important; }
+  .pill .dot { animation: none !important; }
+  .brand:hover img { transform: none; }
+  button.primary::after { display: none; }
+}
+
+/* Chat shell must never push content wider than the viewport. */
+.chat-shell { min-width: 0; }
+.chat-log, .chat-input, .chat-chips { max-width: 100%; }
+.chat-input .primary { min-width: 84px; }
+
+/* ===========================================================================
+   Ambient backdrop: a slow aurora of soft colour plus a faint grid.
+   Transform-only animations (no layout, no paint) so it stays cheap, and
+   it sits behind everything with pointer-events off.
+   =========================================================================== */
+.aurora {
+  position: fixed; inset: 0; z-index: 0;
+  pointer-events: none; overflow: hidden;
+  background: linear-gradient(180deg, #fbfaff 0%, var(--paper) 42%, #f4f6ff 100%);
+}
+.aurora-blob {
+  position: absolute; display: block;
+  border-radius: 50%; filter: blur(70px);
+  opacity: 0.75;
+  will-change: transform;
+}
+.aurora-1 {
+  width: 46vw; height: 46vw; min-width: 340px; min-height: 340px;
+  top: -14vw; left: -8vw;
+  background: radial-gradient(circle at 30% 30%, rgba(59, 130, 246, 0.34), rgba(59, 130, 246, 0) 70%);
+  animation: aurora-drift-a 34s ease-in-out infinite alternate;
+}
+.aurora-2 {
+  width: 40vw; height: 40vw; min-width: 300px; min-height: 300px;
+  top: 22vh; right: -12vw;
+  background: radial-gradient(circle at 60% 40%, rgba(16, 185, 129, 0.24), rgba(16, 185, 129, 0) 72%);
+  animation: aurora-drift-b 42s ease-in-out infinite alternate;
+}
+.aurora-3 {
+  width: 38vw; height: 38vw; min-width: 280px; min-height: 280px;
+  bottom: -16vh; left: 26vw;
+  background: radial-gradient(circle at 50% 50%, rgba(139, 92, 246, 0.2), rgba(139, 92, 246, 0) 72%);
+  animation: aurora-drift-c 50s ease-in-out infinite alternate;
+}
+@keyframes aurora-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(6vw, 5vh, 0) scale(1.14); }
+}
+@keyframes aurora-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.1); }
+  to   { transform: translate3d(-7vw, -4vh, 0) scale(1); }
+}
+@keyframes aurora-drift-c {
+  from { transform: translate3d(0, 0, 0) scale(1.05); }
+  to   { transform: translate3d(5vw, -6vh, 0) scale(1.2); }
+}
+
+/* A faint engineering grid, like a chart paper backdrop. */
+.aurora-grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.055) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 20%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 20%, transparent 78%);
+}
+
+/* Content sits above the backdrop. */
+.wrap { position: relative; z-index: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-blob { animation: none !important; }
+  .aurora-grid { display: none; }
 }

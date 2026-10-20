@@ -176,6 +176,7 @@ function HomeInner() {
       {manual ? (
         <ManualPanel onBack={() => switchMode(false)} onDone={(text) => void send(text)} />
       ) : (
+        <>
         <section className="card chat-shell fade-up" aria-label="Flight agent chat">
           <div className="chat-log" ref={logRef}>
             {log.map((m) => (
@@ -226,31 +227,41 @@ function HomeInner() {
             ))}
           </div>
         </section>
+
+        {/* What this can do — plain language, so nobody has to guess. */}
+        <details className="card capabilities fade-up">
+          <summary>
+            <span className="cap-summary-title">What I can do</span>
+            <span className="cap-summary-sub">Everything below runs on real, free public data</span>
+          </summary>
+          <div className="cap-grid">
+            {CAPABILITIES.map((c) => (
+              <button
+                key={c.title}
+                type="button"
+                className="cap-item"
+                onClick={() => { inputRef.current?.focus(); setInput(c.example); }}
+              >
+                <span className="cap-icon" aria-hidden="true">{c.icon}</span>
+                <span className="cap-body">
+                  <span className="cap-title">{c.title}</span>
+                  <span className="cap-example">try: {c.example}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <Link className="cap-radar" href="/radar">
+            <span className="cap-icon" aria-hidden="true">◉</span>
+            <span className="cap-body">
+              <span className="cap-title">Live radar</span>
+              <span className="cap-example">See every aircraft in the sky right now</span>
+            </span>
+            <span className="cap-arrow" aria-hidden="true">→</span>
+          </Link>
+        </details>
+        </>
       )}
 
-      {/* What this can do — plain language, so nobody has to guess. */}
-      <details className="card capabilities fade-up">
-        <summary>
-          <span className="cap-summary-title">What I can do</span>
-          <span className="cap-summary-sub">Everything below runs on real, free public data</span>
-        </summary>
-        <div className="cap-grid">
-          {CAPABILITIES.map((c) => (
-            <button
-              key={c.title}
-              type="button"
-              className="cap-item"
-              onClick={() => { inputRef.current?.focus(); setInput(c.example); }}
-            >
-              <span className="cap-icon" aria-hidden="true">{c.icon}</span>
-              <span className="cap-body">
-                <span className="cap-title">{c.title}</span>
-                <span className="cap-example">try: {c.example}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </details>
 
       {/* Power tools — the same data, one click from the conversation. */}
       <section className="card power fade-up" aria-label="Filter and track tools">
@@ -289,10 +300,6 @@ function HomeInner() {
           <Link className="discover-card" href="/copilot">
             <div className="discover-title">Agent transcript</div>
             <p>Every tool call, step by step, for review.</p>
-          </Link>
-          <Link className="discover-card" href="/bookings">
-            <div className="discover-title">My bookings</div>
-            <p>Tickets and references once a booking exists.</p>
           </Link>
         </div>
       </section>

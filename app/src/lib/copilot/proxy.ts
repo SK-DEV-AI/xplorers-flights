@@ -16,6 +16,7 @@ export type CopilotIntent =
   | "airquality"
   | "sun"
   | "earthquake"
+  | "drive"
   | "currency"
   | "time"
   | "places"
@@ -65,6 +66,7 @@ Rules:
   airquality = air quality, pollution, AQI, PM2.5, smog
   sun        = sunrise, sunset, daylight hours, golden hour
   earthquake = earthquakes, quakes, tremors, seismic activity
+  drive      = how long to the airport, traffic, drive time, am I late, leave by when
   currency   = exchange rates, currency conversion
   time       = local time, time zone
   places     = what is near / around an airport or city
@@ -110,6 +112,8 @@ function fallbackParse(q: string): CopilotSlots {
         ? "sun"
         : /earthquake|\bquake|tremor|seismic/.test(t)
           ? "earthquake"
+          : /drive|traffic|how long to .*airport|am i late|leave by|reach the airport/.test(t)
+            ? "drive"
           : /weather|forecast|temperature|rain|storm/.test(t)
             ? "weather"
             : /rate|exchange|currency|convert|how much is .* in/.test(t)
@@ -190,7 +194,7 @@ export async function parseWithProxy(q: string): Promise<{ slots: CopilotSlots; 
     const pax = parsed.passengers ?? parsed.adults ?? parsed.pax;
     const intents: CopilotIntent[] = [
       "search", "status", "schedule", "weather", "airquality", "sun",
-      "earthquake", "currency", "time", "places", "unknown",
+      "earthquake", "drive", "currency", "time", "places", "unknown",
     ];
     const intent = intents.includes(parsed.intent as CopilotIntent) ? (parsed.intent as CopilotIntent) : fb.intent;
     return {

@@ -42,6 +42,12 @@ const R = 1;
 const ALT_SCALE = 1.004;
 const ALT_EXAGGERATION = 0.0013;
 
+/** Hard cap on drawn contacts — keeps the buffer small and the draw cheap. */
+const MAX_CONTACTS = 4000;
+
+/** Idle rotation speed, in degrees per second. Slow enough to read contacts. */
+const AUTO_SPIN = 1.1;
+
 function altColor(km: number | null): [number, number, number] {
   if (km == null) return [0.58, 0.65, 0.75];
   if (km < 3) return [0.38, 0.65, 0.98];
@@ -51,9 +57,17 @@ function altColor(km: number | null): [number, number, number] {
 }
 
 export default function Globe({ aircraft, selected, onSelect, onReady }: Props) {
+  const dataRef = useRef<Contact[]>(aircraft);
+  dataRef.current = aircraft;
   const mountRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState("");
+  const pointsRef = useRef<{
+    points: unknown;
+    positions: BufferAttribute;
+    colors: BufferAttribute;
+  } | null>(null);
+
   const apiRef = useRef<{
     pick: (x: number, y: number) => Contact | null;
     reset: () => void;
@@ -168,9 +182,10 @@ export default function Globe({ aircraft, selected, onSelect, onReady }: Props) 
         }
 
         // Aircraft as one Points cloud (single draw call for all contacts).
-        const positions = new Float32Array(aircraft.length * 3);
-        const colors = new Float32Array(aircraft.length * 3);
-        for (let i = 0; i < aircraft.length; i++) {
+        const initialCount = Math.min(aircraft.length, MAX_CONTACTS);
+        const positions = new Float32Array(initialCount * 3);
+        const colors = new Float32Array(initialCount * 3);
+        for (let i = 0; i < initialCount; i++) {
           const c = aircraft[i];
           const radius = R * (c.onGround ? 1.001 : ALT_SCALE + Math.min(0.022, (c.altKm ?? 0) * ALT_EXAGGERATION));
           const v = latLonToVector3(c.lat, c.lon, radius);
@@ -196,6 +211,11 @@ export default function Globe({ aircraft, selected, onSelect, onReady }: Props) 
           }),
         );
         globe.add(points);
+        pointsRef.current = {
+          points,
+          positions: pointGeom.getAttribute("position") as BufferAttribute,
+          colors: pointGeom.getAttribute("color") as BufferAttribute,
+        };
 
         // Selection marker + a drop line to the surface.
         const marker = new THREE.Mesh(
@@ -258,8 +278,8 @@ export default function Globe({ aircraft, selected, onSelect, onReady }: Props) 
           lastY = e.clientY;
           rotY += dx * 0.005;
           rotX += dy * 0.005;
-          velX = dy * 0.005;
-          velY = dx * 0.005;
+          velX = dy * 0.35;
+          velY = dx * 0.35;
           applyRotation();
         };
         const onUp = (e: PointerEvent) => {
@@ -293,7 +313,8 @@ export default function Globe({ aircraft, selected, onSelect, onReady }: Props) 
           const hits = raycaster.intersectObject(points);
           if (hits.length === 0) return null;
           const idx = hits[0]?.index;
-          return idx === undefined ? null : aircraft[idx] ?? null;
+          // Read from the live list, so picking stays correct after a refresh.
+          return idx === undefined ? null : dataRef.current[idx] ?? null;
         };
 
         let clickMoved = false;
@@ -316,8 +337,11 @@ export default function Globe({ aircraft, selected, onSelect, onReady }: Props) 
           const dt = Math.min((now - last) / 1000, 0.05);
           last = now;
           if (!dragging) {
-            rotY += (velY + 0.0016) * dt * 60 * 0.016;
-            rotX += velX * dt * 60 * 0.016;
+            // AUTO_SPIN is degrees per second. The old expression
+            // multiplied by 60 * 0.016, which made the spin so slow it
+            // looked frozen.
+            rotY += (velY + AUTO_SPIN) * dt;
+            rotX += velX * dt;
             velX *= 0.94;
             velY *= 0.94;
             applyRotation();
@@ -397,7 +421,29 @@ export default function Globe({ aircraft, selected, onSelect, onReady }: Props) 
       cleanup?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aircraft, selected]);
+    // The scene is built ONCE. Data refreshes only update the points buffer
+    // (see the effect below) — rebuilding here would reload the textures
+    // every 30 seconds and reset the rotation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Data refresh: update the existing points buffer in place. No scene
+  // rebuild, no texture re-download, no rotation reset.
+  useEffect(() => {
+    const handle = pointsRef.current;
+    if (!handle) return;
+    const n = Math.min(aircraft.length, handle.positions.count);
+    for (let i = 0; i < n; i++) {
+      const c = aircraft[i];
+      const radius = R * (c.onGround ? 1.001 : ALT_SCALE + Math.min(0.022, (c.altKm ?? 0) * ALT_EXAGGERATION));
+      const v = latLonToVector3(c.lat, c.lon, radius);
+      handle.positions.setXYZ(i, v.x, v.y, v.z);
+      const [r, g, b] = altColor(c.altKm);
+      handle.colors.setXYZ(i, r, g, b);
+    }
+    handle.positions.needsUpdate = true;
+    handle.colors.needsUpdate = true;
+  }, [aircraft]);
 
   return (
     <div className="globe-host">

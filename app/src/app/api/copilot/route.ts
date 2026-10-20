@@ -156,6 +156,56 @@ export async function POST(req: Request) {
         }
       }
 
+      case "drive": {
+        const to = slots.airport ?? slots.destination;
+        if (!to) return NextResponse.json({ ...base, ...fail(base, "Which airport should I plan the drive to? Name it, e.g. DEL or Chennai airport.") });
+        steps.push(`Working out the drive to ${to}…`);
+        try {
+          const airport = await lookupAirport(to);
+          // A stand-in for "where the user is now": the airport's own city
+          // centre. The real product takes a GPS fix from the browser.
+          const city = AIRPORT_CITY[airport.iata ?? ""] ?? null;
+          const origin = city ? await resolveCoords(null, city) : null;
+          if (!origin) {
+            return NextResponse.json({
+              ...base,
+              ok: true,
+              drive: { airport: airport.name, code: airport.iata ?? to, minutes: null, distanceKm: null, origin: null },
+              reply: `I know ${airport.name}. Tell me where you are now and I will work out the drive time.`,
+            });
+          }
+          const res = await fetch(
+            `https://router.project-osrm.org/route/v1/driving/${origin.lon},${origin.lat};${airport.longitude},${airport.latitude}?overview=false`,
+            { next: { revalidate: 600 } },
+          );
+          if (!res.ok) throw new Error("The routing service is busy right now.");
+          const route = (await res.json()) as {
+            routes?: Array<{ duration: number; distance: number }>;
+            code?: string;
+          };
+          const leg = route.routes?.[0];
+          if (!leg) throw new Error("I could not work out that route.");
+          const minutes = Math.round(leg.duration / 60);
+          const distanceKm = Math.round(leg.distance / 1000);
+          return NextResponse.json({
+            ...base,
+            ok: true,
+            drive: {
+              airport: airport.name,
+              code: airport.iata ?? to,
+              minutes,
+              distanceKm,
+              origin: city,
+            },
+            reply:
+              `Drive to ${airport.name} is about ${minutes} minutes (${distanceKm} km) from ${city}.` +
+              ` Leave by ${leaveBy(minutes, 90)} to be at the airport 90 minutes before departure.`,
+          });
+        } catch (err) {
+          return NextResponse.json({ ...base, ...fail(base, err instanceof Error ? err.message : "Drive time lookup failed.") });
+        }
+      }
+
       case "airquality": {
         const code = slots.airport ?? slots.origin ?? slots.destination;
         const city = slots.place;
@@ -396,6 +446,22 @@ function zoneFor(hint: string | null): string | null {
     dubai: "Asia/Dubai", singapore: "Asia/Singapore",
   };
   return Object.keys(known).find((k) => hint.toLowerCase().includes(k)) ? known[hint.toLowerCase().split(" ").find((k) => known[k]) ?? ""] ?? null : null;
+}
+
+/** Where a traveller usually starts from, per airport, for drive estimates. */
+const AIRPORT_CITY: Record<string, string> = {
+  DEL: "Delhi", BOM: "Mumbai", MAA: "Chennai", BLR: "Bengaluru", HYD: "Hyderabad",
+  JFK: "New York", LHR: "London", CDG: "Paris", HND: "Tokyo", SFO: "San Francisco",
+  LAX: "Los Angeles", DXB: "Dubai", SIN: "Singapore", ORD: "Chicago", YYZ: "Toronto",
+};
+
+/**
+ * "Leave by" time for an airport arrival buffer (default 90 minutes before
+ * departure), given a drive time. Returns a plain local clock time.
+ */
+function leaveBy(minutes: number, bufferMinutes: number): string {
+  const departBy = new Date(Date.now() + (minutes + bufferMinutes) * 60000);
+  return departBy.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function aqiBand(aqi: number | null): string {
