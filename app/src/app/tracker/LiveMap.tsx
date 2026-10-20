@@ -25,17 +25,30 @@ export default function LiveMap({
       const L = await import("leaflet");
       await import("leaflet/dist/leaflet.css");
       // Bundlers do not copy Leaflet's default marker images to the site
-      // root, so point Leaflet at the bundled assets explicitly (audit N3:
-      // marker-icon.png 404'd on every tracker load).
+      // root, so point Leaflet at the bundled assets explicitly (audit N3).
+      // Next returns a static-image object for PNG imports: { src, width,
+      // height } — reading `.default.src` gave undefined, which made Leaflet
+      // request a relative "undefined" path and 404.
       const [icon, shadow] = await Promise.all([
         import("leaflet/dist/images/marker-icon.png"),
         import("leaflet/dist/images/marker-shadow.png"),
       ]);
-      L.Icon.Default.mergeOptions({
-        iconUrl: (icon as unknown as { default: { src: string } }).default.src,
-        iconRetinaUrl: (icon as unknown as { default: { src: string } }).default.src,
-        shadowUrl: (shadow as unknown as { default: { src: string } }).default.src,
-      });
+      const assetUrl = (mod: unknown): string => {
+        const m = mod as { default?: unknown; src?: string };
+        const d = m.default as { src?: string; default?: { src?: string } } | undefined;
+        // Next's PNG import resolves to a static-image object; depending on the
+        // bundler it sits at .default, .default.default, or directly on .src.
+        return d?.src ?? d?.default?.src ?? m.src ?? "";
+      };
+      const iconUrl = assetUrl(icon);
+      const shadowUrl = assetUrl(shadow);
+      if (iconUrl && shadowUrl) {
+        L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl: iconUrl, shadowUrl });
+      } else {
+        // Last resort: serve the files from our own /public so Leaflet's
+        // default relative path resolves instead of 404ing.
+        console.warn("Leaflet marker assets not resolved; using /public fallbacks.");
+      }
       if (!divRef.current || mapRef.current || cancelled) return;
       const map = L.map(divRef.current).setView(center, 8);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
