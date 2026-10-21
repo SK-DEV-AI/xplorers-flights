@@ -38,6 +38,11 @@ export const env = {
   rapidApiKey: process.env.RAPIDAPI_KEY ?? "",
   supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
   supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+  // The agent model. Local big-pickle proxy for team testing; the team buys
+  // a real key later and changes these three values — no code change.
+  copilotBaseUrl: process.env.COPILOT_BASE_URL ?? "http://127.0.0.1:8787/v1",
+  copilotModel: process.env.COPILOT_MODEL ?? "big-pickle",
+  copilotApiKey: process.env.COPILOT_API_KEY ?? "local-dev-key",
 } as const;
 
 /** Server-only secrets. Never import these from client components. */

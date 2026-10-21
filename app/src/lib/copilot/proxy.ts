@@ -20,6 +20,7 @@ export type CopilotIntent =
   | "transit"
   | "waittime"
   | "parking"
+  | "help"
   | "currency"
   | "time"
   | "places"
@@ -73,6 +74,7 @@ Rules:
   transit    = bus, metro, train or public transport to the airport, how to get there
   waittime   = security queue, how long the line is, TSA wait times
   parking    = parking at the airport, where to park, car park
+  help       = asks what this can do, what are you, help, capabilities, who are you
   currency   = exchange rates, currency conversion
   time       = local time, time zone
   places     = what is near / around an airport or city
@@ -108,29 +110,39 @@ function fallbackParse(q: string): CopilotSlots {
   };
   const zone = Object.keys(zoneHint).find((k) => t.includes(k)) ?? null;
   const place = Object.keys(CITY_TO_IATA).find((k) => t.includes(k)) ?? null;
+  // Ordered most-specific first. The model usually gets this right, but
+  // this local parse is the fallback when the model is unavailable.
   const intent: CopilotIntent = flightNo
     ? /schedule|timetable/.test(t)
       ? "schedule"
       : "status"
-    : /air ?quality|pollution|\baqi\b|pm2\.5|smog/.test(t)
-      ? "airquality"
-      : /sunrise|sunset|daylight|golden hour/.test(t)
-        ? "sun"
-        : /earthquake|\bquake|tremor|seismic/.test(t)
-          ? "earthquake"
-          : /drive|traffic|how long to .*airport|am i late|leave by|reach the airport/.test(t)
-            ? "drive"
-          : /weather|forecast|temperature|rain|storm/.test(t)
-            ? "weather"
-            : /rate|exchange|currency|convert|how much is .* in/.test(t)
-              ? "currency"
-              : /\btime\b|timezone|local time/.test(t)
-                ? "time"
-                : /near|around|at the airport|things to do|hotel|food|sight/.test(t)
-                  ? "places"
-                  : origin || destination
-                    ? "search"
-                    : "unknown";
+    : /what can you do|what are you|who are you|your capabilities|help me|how do you work|what do you do|what are you capable/.test(t)
+      ? "help"
+      : /security (queue|wait|line)|tsa wait|how long (is|will) the line|wait time at/.test(t)
+        ? "waittime"
+        : /parking|park the car|car park|where to park/.test(t)
+          ? "parking"
+          : /\b(bus|metro|train|tram|public transport|how do i get (to|there))\b/.test(t)
+            ? "transit"
+            : /air ?quality|pollution|\baqi\b|pm2\.5|smog/.test(t)
+              ? "airquality"
+              : /sunrise|sunset|daylight|golden hour/.test(t)
+                ? "sun"
+                : /earthquake|\bquake|tremor|seismic/.test(t)
+                  ? "earthquake"
+                  : /drive|traffic|how long to .*airport|am i late|leave by|reach the airport/.test(t)
+                    ? "drive"
+                    : /weather|forecast|temperature|rain|storm/.test(t)
+                      ? "weather"
+                      : /rate|exchange|currency|convert|how much is .* in/.test(t)
+                        ? "currency"
+                        : /\btime\b|timezone|local time/.test(t)
+                          ? "time"
+                          : /near|around|at the airport|things to do|hotel|food|sight/.test(t)
+                            ? "places"
+                            : origin || destination
+                              ? "search"
+                              : "unknown";
   return {
     origin,
     destination,
@@ -200,8 +212,8 @@ export async function parseWithProxy(q: string): Promise<{ slots: CopilotSlots; 
     const pax = parsed.passengers ?? parsed.adults ?? parsed.pax;
     const intents: CopilotIntent[] = [
       "search", "status", "schedule", "weather", "airquality", "sun",
-      "earthquake", "drive", "transit", "waittime", "parking", "currency",
-      "time", "places", "unknown",
+      "earthquake", "drive", "transit", "waittime", "parking", "help",
+      "currency", "time", "places", "unknown",
     ];
     const intent = intents.includes(parsed.intent as CopilotIntent) ? (parsed.intent as CopilotIntent) : fb.intent;
     return {

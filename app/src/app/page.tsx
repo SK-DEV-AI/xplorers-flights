@@ -329,6 +329,18 @@ function HomeInner() {
   );
 }
 
+/** Renders **bold** without a markdown dependency. */
+function renderLine(line: string): React.ReactNode {
+  const parts = line.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  return parts.map((part, i) =>
+    part.startsWith("**") && part.endsWith("**") ? (
+      <strong key={i}>{part.slice(2, -2)}</strong>
+    ) : (
+      <span key={i}>{part}</span>
+    ),
+  );
+}
+
 function Bubble({
   m, showAll, setShowAll, onReview, onFilter,
 }: {
@@ -344,7 +356,11 @@ function Bubble({
   return (
     <div className={`bubble-row ${m.role}`}>
       <div className={`bubble ${m.role} bubble-in`}>
-        <p>{m.text}</p>
+        {m.text.split("\n").map((line, i) => (
+          <p key={i} className={line.trim() === "" ? "agent-gap" : undefined}>
+            {renderLine(line)}
+          </p>
+        ))}
 
         {list.length > 0 && (
           <div className="inline-offers">

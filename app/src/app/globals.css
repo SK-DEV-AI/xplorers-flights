@@ -744,3 +744,8 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   .aurora-blob { animation: none !important; }
   .aurora-grid { display: none; }
 }
+
+/* Agent replies are markdown-ish: keep paragraphs tight and readable. */
+.bubble.agent p { margin: 0 0 4px; }
+.bubble.agent p.agent-gap { height: 8px; margin: 0; }
+.bubble.agent strong { font-weight: 650; }
