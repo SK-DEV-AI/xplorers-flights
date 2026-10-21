@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { askModel, composeAnswer, type ChatMessage } from "@/lib/copilot/agent";
+import { askModel, composeAnswer, isAcceptableReply, type ChatMessage } from "@/lib/copilot/agent";
 import { runTool, describeToolResult } from "@/lib/copilot/tools";
 
 /**
@@ -43,7 +43,13 @@ export async function POST(req: Request) {
       if (!decision.toolCall) {
         const text = decision.text?.trim();
         if (text) {
-          return NextResponse.json({ reply: text, ok: true, steps, intent, data });
+          const allFacts = facts.join("\n\n");
+          if (isAcceptableReply(text, allFacts, message)) {
+            return NextResponse.json({ reply: text, ok: true, steps, intent, data });
+          }
+          // The answer broke a guard — fall through and write it ourselves
+          // from the facts we actually gathered.
+          break;
         }
         break;
       }

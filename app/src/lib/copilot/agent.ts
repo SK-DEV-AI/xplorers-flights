@@ -292,6 +292,24 @@ function numbersAreSupported(reply: string, facts: string, userMessage: string):
   return true;
 }
 
+/**
+ * Is this reply acceptable to show the user?
+ *
+ * Two ways a reply can be wrong:
+ *   - it is a raw data dump instead of an answer
+ *   - it contains a number that is not in the facts (an invented price or
+ *     distance — the model once wrote "621" when the fare was 655.14)
+ *
+ * When there are no facts (the model is just chatting) we do not check the
+ * numbers: it is allowed to use its own knowledge for ordinary conversation.
+ */
+export function isAcceptableReply(text: string, facts: string, userMessage: string): boolean {
+  if (!text.trim()) return false;
+  if (looksLikeData(text)) return false;
+  if (!facts.trim()) return true;
+  return numbersAreSupported(text, facts, userMessage);
+}
+
 /** Does this look like a raw data dump rather than an answer? */
 function looksLikeData(text: string): boolean {
   const t = text.trim();
@@ -338,7 +356,6 @@ export async function composeAnswer(userMessage: string, facts: string): Promise
   if (!res.ok) return "";
   const json = (await res.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
   const text = json.choices?.[0]?.message?.content?.trim() ?? "";
-  if (!text || looksLikeData(text)) return "";
-  if (!numbersAreSupported(text, facts, userMessage)) return "";
+  if (!isAcceptableReply(text, facts, userMessage)) return "";
   return text;
 }
