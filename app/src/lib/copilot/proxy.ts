@@ -17,6 +17,9 @@ export type CopilotIntent =
   | "sun"
   | "earthquake"
   | "drive"
+  | "transit"
+  | "waittime"
+  | "parking"
   | "currency"
   | "time"
   | "places"
@@ -67,6 +70,9 @@ Rules:
   sun        = sunrise, sunset, daylight hours, golden hour
   earthquake = earthquakes, quakes, tremors, seismic activity
   drive      = how long to the airport, traffic, drive time, am I late, leave by when
+  transit    = bus, metro, train or public transport to the airport, how to get there
+  waittime   = security queue, how long the line is, TSA wait times
+  parking    = parking at the airport, where to park, car park
   currency   = exchange rates, currency conversion
   time       = local time, time zone
   places     = what is near / around an airport or city
@@ -194,7 +200,8 @@ export async function parseWithProxy(q: string): Promise<{ slots: CopilotSlots; 
     const pax = parsed.passengers ?? parsed.adults ?? parsed.pax;
     const intents: CopilotIntent[] = [
       "search", "status", "schedule", "weather", "airquality", "sun",
-      "earthquake", "drive", "currency", "time", "places", "unknown",
+      "earthquake", "drive", "transit", "waittime", "parking", "currency",
+      "time", "places", "unknown",
     ];
     const intent = intents.includes(parsed.intent as CopilotIntent) ? (parsed.intent as CopilotIntent) : fb.intent;
     return {

@@ -20,6 +20,14 @@ import { lookupAirport } from "@/lib/aviation/keyless";
 
 const DEFAULT_DATE = "2026-11-14";
 
+/**
+ * Our own origin, for the route-to-route calls (a relative URL has no
+ * origin inside a server handler).
+ */
+const SELF_ORIGIN =
+  process.env.NEXT_PUBLIC_SITE_ORIGIN ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3100");
+
 /** A failure envelope: always carries a human-readable reply. */
 function failBody(message: string) {
   return { reply: message, ok: false as const };
@@ -158,7 +166,7 @@ export async function POST(req: Request) {
 
       case "drive": {
         const to = slots.airport ?? slots.destination;
-        if (!to) return NextResponse.json({ ...base, ...fail(base, "Which airport should I plan the drive to? Name it, e.g. DEL or Chennai airport.") });
+        if (!to) return fail(base, "Which airport should I plan the drive to? Name it, e.g. DEL or Chennai airport.");
         steps.push(`Working out the drive to ${to}…`);
         try {
           const airport = await lookupAirport(to);
@@ -202,7 +210,7 @@ export async function POST(req: Request) {
               ` Leave by ${leaveBy(minutes, 90)} to be at the airport 90 minutes before departure.`,
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(base, err instanceof Error ? err.message : "Drive time lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Drive time lookup failed.");
         }
       }
 
@@ -211,7 +219,7 @@ export async function POST(req: Request) {
         const city = slots.place;
         steps.push(code ? `Checking air quality near ${code}…` : city ? `Checking air quality in ${city}…` : "Checking air quality…");
         const coords = await resolveCoords(code, city);
-        if (!coords) return NextResponse.json({ ...base, ...fail(base, "Which place? Name a city or airport code.") });
+        if (!coords) return fail(base, "Which place? Name a city or airport code.");
         try {
           const url =
             `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${coords.lat}&longitude=${coords.lon}` +
@@ -239,7 +247,7 @@ export async function POST(req: Request) {
               (pm != null ? `, PM2.5 ${pm} µg/m³.` : "."),
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(base, err instanceof Error ? err.message : "Air quality lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Air quality lookup failed.");
         }
       }
 
@@ -248,7 +256,7 @@ export async function POST(req: Request) {
         const city = slots.place;
         steps.push(code ? `Checking daylight hours at ${code}…` : city ? `Checking daylight hours in ${city}…` : "Checking daylight hours…");
         const coords = await resolveCoords(code, city);
-        if (!coords) return NextResponse.json({ ...base, ...fail(base, "Which place? Name a city or airport code.") });
+        if (!coords) return fail(base, "Which place? Name a city or airport code.");
         try {
           const url =
             `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}` +
@@ -271,7 +279,7 @@ export async function POST(req: Request) {
               (length ? ` — ${length} of daylight.` : "."),
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(base, err instanceof Error ? err.message : "Sun lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Sun lookup failed.");
         }
       }
 
@@ -307,7 +315,185 @@ export async function POST(req: Request) {
               : "No earthquakes above magnitude 4.5 in the last day.",
           });
         } catch (err) {
-          return NextResponse.json({ ...base, ...fail(base, err instanceof Error ? err.message : "Seismic lookup failed.") });
+          return fail(base, err instanceof Error ? err.message : "Seismic lookup failed.");
+        }
+      }
+
+      case "waittime": {
+        const code = (slots.airport ?? slots.destination ?? "").toUpperCase();
+        steps.push("Checking the security queue…");
+        try {
+          const res = await fetch("https://securitywaittimes.com/wp-json/swt/v1/wait", {
+            headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
+            signal: AbortSignal.timeout(20000),
+          });
+          if (!res.ok) throw new Error("Security wait times are unavailable right now.");
+          const json = (await res.json()) as {
+            live_count?: number;
+            modelled_count?: number;
+            airports?: Array<{
+              iata: string; name: string; city?: string; state?: string;
+              standard_minutes?: number | null; precheck_minutes?: number | null;
+              measurement?: string; precheck_measurement?: string;
+            }>;
+          };
+          const row = code ? (json.airports ?? []).find((a) => a.iata === code) : undefined;
+          if (code && !row) {
+            return fail(base, `No security wait data for ${code}. It covers 440 US airports.`);
+          }
+          const live = row?.measurement === "live";
+          return NextResponse.json({
+            ...base,
+            ok: true,
+            waitTime: row
+              ? {
+                  iata: row.iata,
+                  name: row.name,
+                  city: row.city ?? null,
+                  standardMinutes: row.standard_minutes ?? null,
+                  precheckMinutes: row.precheck_minutes ?? null,
+                  live,
+                  source: live ? "live" : "estimated",
+                }
+              : null,
+            reply: row
+              ? `Security at ${row.name} is about ${row.standard_minutes ?? "—"} minutes` +
+                (row.precheck_minutes != null ? ` (${row.precheck_minutes} min with PreCheck)` : "") +
+                `. ${live ? "That figure is live from the airport." : "That is an estimate, not a live reading."}`
+              : `Security wait times cover 440 US airports (${json.live_count ?? 0} live right now).`,
+          });
+        } catch (err) {
+          return fail(base, err instanceof Error ? err.message : "Wait time lookup failed.");
+        }
+      }
+
+      case "parking":
+      case "places": {
+        const code = slots.airport ?? slots.destination ?? slots.origin;
+        const city = slots.place;
+        steps.push(code ? `Looking for parking and transport near ${code}…` : city ? `Looking up places near ${city}…` : "Looking up nearby places…");
+        const coords = await resolveCoords(code, city);
+        if (!coords) return fail(base, "Which place? Name a city or airport code.");
+        try {
+          const json = await nearbyPlaces(coords.lat, coords.lon, 2000);
+          const places = json.places ?? [];
+          const parking = places.filter((p) => p.kind === "parking");
+          const transit = places.filter((p) => p.kind === "transit");
+          const taxi = places.filter((p) => p.kind === "taxi");
+          const shown = slots.intent === "parking" ? parking : places;
+          return NextResponse.json({
+            ...base,
+            ok: true,
+            nearby: {
+              label: coords.label,
+              parking: parking.slice(0, 5),
+              transit: transit.slice(0, 5),
+              taxi: taxi.slice(0, 3),
+            },
+            reply: shown.length
+              ? `Near ${coords.label}: ${shown.slice(0, 4).map((p) => p.name).join(", ")}.` +
+                (parking.length ? ` ${parking.length} parking option${parking.length === 1 ? "" : "s"} nearby.` : "") +
+                (transit.length ? ` ${transit.length} transit stop${transit.length === 1 ? "" : "s"} nearby.` : "")
+              : `I could not find parking or transit stops near ${coords.label} in OpenStreetMap.`,
+          });
+        } catch (err) {
+          return fail(base, err instanceof Error ? err.message : "Places lookup failed.");
+        }
+      }
+
+      case "transit": {
+        const to = slots.airport ?? slots.destination;
+        if (!to) return fail(base, "Which airport should I plan the trip to? Name it, e.g. BLR or Heathrow.");
+        steps.push(`Planning the public transport route to ${to}…`);
+        try {
+          const airport = await lookupAirport(to);
+          const originCity = AIRPORT_CITY[airport.iata ?? ""] ?? null;
+          const origin = originCity ? await resolveCoords(null, originCity) : null;
+          if (!origin) {
+            return NextResponse.json({
+              ...base,
+              ok: true,
+              transit: null,
+              reply: `I can plan bus and metro routes to ${airport.name}, but I need a starting point. Which city are you travelling from?`,
+            });
+          }
+          // Transitous routes between STOPS, not city centroids, so we ask its
+          // own geocoder for the nearest stop to each end first. Without this
+          // it returns zero itineraries.
+          const [fromStop, toStop] = await Promise.all([
+            transitStop(originCity ?? "", origin.lat, origin.lon),
+            transitStop(airport.name, airport.longitude, airport.latitude),
+          ]);
+          if (!fromStop || !toStop) {
+            return NextResponse.json({
+              ...base,
+              ok: true,
+              transit: { label: airport.name, count: 0, legs: [] },
+              reply: `The open transit dataset does not have a stop I can route from for ${airport.name}. It covers Bengaluru, Hyderabad, London and Berlin well.`,
+            });
+          }
+          const when = new Date(Date.now() + 3600000).toISOString();
+          const res = await fetch(
+            `https://api.transitous.org/api/v1/plan?fromPlace=${fromStop.lat},${fromStop.lon}` +
+            `&toPlace=${toStop.lat},${toStop.lon}&time=${encodeURIComponent(when)}` +
+            `&mode=TRANSIT,WALK&numItineraries=1`,
+            {
+              headers: { "User-Agent": TRANSIT_UA, Accept: "application/json" },
+              signal: AbortSignal.timeout(40000),
+            },
+          );
+          if (!res.ok) throw new Error("Transit directions are unavailable right now.");
+          const raw = (await res.json()) as {
+            itineraries?: Array<{
+              duration?: number;
+              legs?: Array<{
+                mode?: string;
+                routeShortName?: string;
+                agencyName?: string;
+                from?: { name?: string };
+                to?: { name?: string };
+                duration?: number;
+              }>;
+            }>;
+          };
+          const json = {
+            count: raw.itineraries?.length ?? 0,
+            itineraries: (raw.itineraries ?? []).map((it) => ({
+              durationMinutes: it.duration ? Math.round(it.duration / 60) : null,
+              legs: (it.legs ?? []).map((leg) => ({
+                mode: leg.mode ?? "WALK",
+                route: leg.routeShortName ?? null,
+                agency: leg.agencyName ?? null,
+                from: leg.from?.name ?? null,
+                to: leg.to?.name ?? null,
+                minutes: leg.duration ? Math.round(leg.duration / 60) : null,
+              })),
+            })),
+          };
+          const it = json.itineraries?.[0];
+          if (!it) {
+            return NextResponse.json({
+              ...base,
+              ok: true,
+              transit: { label: airport.name, count: 0, legs: [] },
+              reply: `I could not find a public transport route to ${airport.name} in the open dataset. It covers Bengaluru, Hyderabad, London and Berlin well, but not every city yet.`,
+            });
+          }
+          return NextResponse.json({
+            ...base,
+            ok: true,
+            transit: {
+              label: airport.name,
+              count: json.count ?? 1,
+              durationMinutes: it.durationMinutes ?? null,
+              legs: it.legs ?? [],
+            },
+            reply:
+              `Bus and metro to ${airport.name}: about ${it.durationMinutes ?? "—"} minutes.` +
+              (it.legs?.[0]?.route ? ` Take ${it.legs[0].route}${it.legs[0].agency ? ` (${it.legs[0].agency})` : ""}.` : ""),
+          });
+        } catch (err) {
+          return fail(base, err instanceof Error ? err.message : "Transit lookup failed.");
         }
       }
 
@@ -463,6 +649,147 @@ function leaveBy(minutes: number, bufferMinutes: number): string {
   const departBy = new Date(Date.now() + (minutes + bufferMinutes) * 60000);
   return departBy.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
+
+/**
+ * Find the nearest Transitous stop to a point, using its own geocoder.
+ * Transitous routes between stops, so a city centroid finds nothing.
+ */
+async function transitStop(
+  label: string,
+  lat: number,
+  lon: number,
+): Promise<{ lat: number; lon: number } | null> {
+  try {
+    const res = await fetch(
+      `https://api.transitous.org/api/v1/geocode?text=${encodeURIComponent(label)}`,
+      { headers: { "User-Agent": TRANSIT_UA }, signal: AbortSignal.timeout(12000) },
+    );
+    if (!res.ok) return null;
+    const list = (await res.json()) as Array<{ lat?: number; lon?: number; type?: string }>;
+    const stop = list.find((x) => x.type === "STOP") ?? list[0];
+    if (!stop || typeof stop.lat !== "number" || typeof stop.lon !== "number") return null;
+    return { lat: stop.lat, lon: stop.lon };
+  } catch {
+    return null;
+  }
+}
+
+/** Descriptive User-Agent — Overpass and Transitous both require one. */
+const TRANSIT_UA =
+  "XplorersFlights/1.0 (student project; open source; https://github.com/SK-DEV-AI/xplorers-flights)";
+
+/**
+ * Parking, transit stops and taxi ranks near a point, from OpenStreetMap
+ * via Overpass. The public Overpass instance is frequently at capacity, so
+ * we fall back to a Nominatim reverse lookup, which names the area.
+ */
+async function nearbyPlaces(
+  lat: number,
+  lon: number,
+  radius: number,
+): Promise<{ count: number; places: Array<{ kind: string; name: string; detail: string }> }> {
+  const query =
+    `[out:json][timeout:20];(` +
+    `node["amenity"="parking"](around:${radius},${lat},${lon});` +
+    `node["public_transport"="stop_position"](around:${radius},${lat},${lon});` +
+    `node["amenity"="taxi"](around:${radius},${lat},${lon});` +
+    `);out body 40;`;
+  for (const url of ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": TRANSIT_UA },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(22000),
+      });
+      const type = res.headers.get("content-type") ?? "";
+      if (!res.ok || !type.includes("json")) continue;
+      const json = (await res.json()) as {
+        elements?: Array<{ lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }>;
+      };
+      const elements = json.elements ?? [];
+      if (elements.length === 0) continue;
+      return {
+        count: elements.length,
+        places: elements.map((el) => {
+          const tags = el.tags ?? {};
+          const kind =
+            tags.amenity === "parking" ? "parking" : tags.amenity === "taxi" ? "taxi" : tags.public_transport ? "transit" : "place";
+          return {
+            kind,
+            name: tags["name:en"] ?? tags.name ?? "Unnamed",
+            detail:
+              kind === "parking"
+                ? [tags.parking, tags.capacity ? `${tags.capacity} spaces` : null, tags.fee === "yes" ? "paid" : null]
+                    .filter(Boolean).join(" · ") || "Parking"
+                : kind === "transit"
+                  ? [tags.network ?? tags.operator, tags.railway === "subway" ? "metro" : tags.bus === "yes" ? "bus" : null]
+                      .filter(Boolean).join(" · ") || "Transit stop"
+                  : kind === "taxi" ? "Taxi" : "Place",
+          };
+        }),
+      };
+    } catch {
+      // Try the next mirror.
+    }
+  }
+  // Fallback: search Nominatim for named parking and transit near the
+  // point. Overpass is frequently at capacity, and Nominatim is steadier.
+  for (const term of ["parking", "metro station", "bus station"]) {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(term)}&viewbox=${lon - 0.02},${lat + 0.02},${lon + 0.02},${lat - 0.02}&bounded=1`,
+        { headers: { "User-Agent": TRANSIT_UA }, signal: AbortSignal.timeout(9000) },
+      );
+      if (!res.ok) continue;
+      const list = (await res.json()) as Array<{ name?: string; display_name?: string; type?: string; category?: string }>;
+      if (list.length > 0) {
+        const kind = term === "parking" ? "parking" : "transit";
+        return {
+          count: list.length,
+          places: list.map((x) => ({
+            kind,
+            name: x.name ?? x.display_name ?? "Unnamed",
+            detail: x.display_name?.split(",").slice(1, 3).join(",").trim() ?? "",
+          })),
+        };
+      }
+    } catch {
+      // Try the next term.
+    }
+  }
+
+  // Last resort: name the area around the point.
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=14&addressdetails=1&namedetails=1`,
+      { headers: { "User-Agent": TRANSIT_UA }, signal: AbortSignal.timeout(10000) },
+    );
+    if (res.ok) {
+      const json = (await res.json()) as { name?: string; display_name?: string; category?: string; type?: string; address?: Record<string, string> };
+      const name = json.name ?? json.address?.aeroway ?? json.address?.road ?? json.address?.suburb;
+      if (name) {
+        return {
+          count: 1,
+          places: [
+            {
+              kind: json.category ?? json.type ?? "area",
+              name,
+              detail: json.display_name?.split(",").slice(1, 3).join(",").trim() ?? "",
+            },
+          ],
+        };
+      }
+    }
+  } catch {
+    // Fall through.
+  }
+  return { count: 0, places: [] };
+}
+
+/** Security Wait Times only answers a browser-like User-Agent. */
+const BROWSER_UA =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36";
 
 function aqiBand(aqi: number | null): string {
   if (aqi == null) return "unknown";
