@@ -8,6 +8,8 @@
  * - Live traffic alt: https://opensky-network.org/api/states/all (anonymous)
  */
 
+import { localAirport } from "@/lib/aviation/airports";
+
 export interface AirportInfo {
   code: string;
   name: string;
@@ -48,8 +50,27 @@ export async function lookupAirport(code: string): Promise<AirportInfo> {
   if (!/^[A-Z0-9]{3,4}$/.test(clean)) {
     throw new Error("Enter a 3-letter IATA or 4-letter ICAO code.");
   }
+
+  // The local table first. airportsapi.com sits behind Cloudflare and
+  // intermittently times out from this machine, which used to take the
+  // drive-time and transit tools down with it.
+  const local = localAirport(clean);
+  if (local) {
+    return {
+      code: clean,
+      name: local.name,
+      type: "airport",
+      latitude: local.lat,
+      longitude: local.lon,
+      elevation: 0,
+      icao: null,
+      iata: local.iata,
+    };
+  }
+
   const res = await fetch(`https://airportsapi.com/api/airports/${clean}`, {
     next: { revalidate: 86400 }, // reference data barely changes
+    signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`No airport found for "${clean}".`);
   const json = (await res.json()) as AirportsApiResponse;

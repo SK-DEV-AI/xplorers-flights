@@ -196,16 +196,22 @@ const SYSTEM = `You are the flight agent for Xplorers Flights, a site where peop
 You run tools. You do not have API keys, so you never call an API yourself — you choose a tool, and the site runs it for you.
 
 How to work:
-1. Read the user's message. If it needs live data, call ONE tool with the right arguments.
-2. If the user is just chatting, asking what you can do, or asking a question you can answer from what you already know, reply in plain language. Do not call a tool for that.
-3. If a message is too vague to act on, ask one short clarifying question in a friendly, conversational tone.
-4. If a call is a bad fit, say so warmly and suggest what you can do instead.
+1. Read the user's message. If it needs live data, call a tool with the right arguments.
+2. You are NOT limited to one tool. If answering well needs two facts — a flight AND the weather there, or a route AND the airport security queue — call them one after another. The site runs each one and hands you the result, then you decide what to do next.
+3. If the user is just chatting, asking what you can do, or asking something you can answer from what you already know, reply in plain language. Do not call a tool for that.
+4. If a message is too vague to act on, ask one short clarifying question in a friendly, conversational tone.
+5. If a call is a bad fit, say so warmly and suggest what you can do instead.
+6. You decide the arguments. If the user did not give you something a tool needs, pick the sensible default or ask — do not stall.
 
 Tone: warm, confident, brief. Like a knowledgeable travel assistant, not a form. Never robotic, never scold the user, never repeat the same sentence twice. Use the user's own words. If you are unsure, say "let me check" and call a tool.
 
-Never invent flight numbers, prices, times or airport codes. If you need a fact you do not have, call a tool.`;
+Never invent flight numbers, prices, times or airport codes. If you need a fact you do not have, call a tool.
 
-interface ChatMessage {
+When you have just run a tool, the facts come back as plain sentences. Turn them into a short, warm reply for the user — two to five sentences, or a tidy list if there are several options. Never print JSON, braces, raw arrays or key-value dumps. If a number matters, put it in plain text (you may wrap a few key numbers in **double asterisks**). Never repeat the facts back verbatim — pick what matters and say it like a person would.
+
+Use the numbers exactly as they appear in the facts. Never re-round, re-convert, divide, multiply or re-price anything. If the facts say 655.14 GBP, write 655.14 GBP. If you are unsure what a number means, leave it out rather than guess.`;
+
+export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
   tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
@@ -264,13 +270,49 @@ export async function askModel(messages: ChatMessage[]): Promise<{
   return { text: message?.content?.trim() || "" };
 }
 
-/** Ask the model to write the final answer from a tool result. */
-export async function composeAnswer(
-  userMessage: string,
-  toolName: string,
-  toolResult: unknown,
-  toolSummary: string,
-): Promise<string> {
+/** Every number that appears in a string, normalised (no commas, no units). */
+function numbersIn(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.match(/\d+(?:[.,]\d+)?/g) ?? []) {
+    out.add(m.replace(/,/g, ""));
+  }
+  return out;
+}
+
+/**
+ * Every number in the reply must come from the facts or the user's own
+ * message. The model once turned "655.14 GBP" into "621 per person" — a
+ * plausible-looking invention. This catches that class of mistake.
+ */
+function numbersAreSupported(reply: string, facts: string, userMessage: string): boolean {
+  const allowed = numbersIn(`${facts}\n${userMessage}`);
+  for (const n of numbersIn(reply)) {
+    if (!allowed.has(n)) return false;
+  }
+  return true;
+}
+
+/** Does this look like a raw data dump rather than an answer? */
+function looksLikeData(text: string): boolean {
+  const t = text.trim();
+  // A JSON object or array.
+  if (t.startsWith("{") || t.startsWith("[")) return true;
+  // Quoted keys with colons, e.g. {"total":83,"top":[...]}. Deliberately
+  // narrow: "**Price:** 613 GBP" is a legitimate sentence, not a dump.
+  if (/[{,]\s*"[A-Za-z_][A-Za-z0-9_]*"\s*:/.test(t)) return true;
+  // Many key/value pairs in a row, e.g. "total: 83, top: [...]".
+  const kv = t.match(/[A-Za-z_][A-Za-z0-9_]*\s*[:=]\s*["'[{0-9-]/g);
+  if (kv && kv.length >= 3) return true;
+  return false;
+}
+
+/**
+ * Ask the model to write the final answer from the facts we gathered.
+ *
+ * The facts are PROSE. If the model still emits a data dump we return an
+ * empty string so the caller can fall back to our own summary.
+ */
+export async function composeAnswer(userMessage: string, facts: string): Promise<string> {
   const base = env.copilotBaseUrl;
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
@@ -281,20 +323,22 @@ export async function composeAnswer(
         { role: "system", content: SYSTEM },
         { role: "user", content: userMessage },
         {
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            { id: "call_1", type: "function", function: { name: toolName, arguments: "{}" } },
-          ],
+          role: "user",
+          content:
+            `Here is what I looked up:\n\n${facts}\n\n` +
+            `Now write the reply to the user. Two to five warm sentences, plain language, no JSON, ` +
+            `no key-value dumps, and do not repeat these facts word for word.`,
         },
-        { role: "tool", tool_call_id: "call_1", name: toolName, content: toolSummary },
       ],
-      max_tokens: 500,
+      max_tokens: 700,
       temperature: 0.4,
     }),
     signal: AbortSignal.timeout(60000),
   });
-  if (!res.ok) return toolSummary;
+  if (!res.ok) return "";
   const json = (await res.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
-  return json.choices?.[0]?.message?.content?.trim() || toolSummary;
+  const text = json.choices?.[0]?.message?.content?.trim() ?? "";
+  if (!text || looksLikeData(text)) return "";
+  if (!numbersAreSupported(text, facts, userMessage)) return "";
+  return text;
 }

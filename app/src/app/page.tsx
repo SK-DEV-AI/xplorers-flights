@@ -40,12 +40,14 @@ const CAPABILITIES = [
   { icon: "\u25c9", title: "Live radar", example: "Open the radar" },
 ];
 
-interface ToolRun {
-  id: number;
-  role: "user" | "agent" | "tool";
-  text: string;
+/**
+ * Tool payloads the agent can hand back. `/api/agent` nests them under
+ * `data`; the deterministic fallback router returns them flat. These mirror
+ * the shapes `runTool` produces in `src/lib/copilot/tools.ts`.
+ */
+interface AgentData {
   offers?: FlightOffer[];
-  flights?: Array<{ flightNo: string; airline: string; status: string; departure: string; arrival: string; delayMin: number | null }>;
+  flights?: Array<{ flightNo: string; airline: string; status: string; departure: string; arrival: string; delayMin: number | null; terminal?: string | null; gate?: string | null }>;
   legs?: Array<{ flightNo: string | null; origin: string; destination: string; scheduledUtc: string | null; distanceKm: number | null }>;
   weather?: { label: string; temp: number; code?: number; wind?: number; high?: number; low?: number };
   airQuality?: { label: string; pm25: number | null; usAqi: number | null; band: string };
@@ -54,7 +56,52 @@ interface ToolRun {
   places?: Array<{ name: string; displayName: string }>;
   rate?: { base: string; quote: string; value: number; date: string };
   time?: { time: string; zone: string };
+  drive?: {
+    airport: string; code: string; minutes: number | null; distanceKm: number | null;
+    origin?: string; budgetMinutes?: number | null; budgetLabel?: string | null;
+  };
+  waitTime?: { iata: string; name: string; city: string | null; standardMinutes: number | null; precheckMinutes: number | null; live: boolean };
+  transit?: {
+    label: string;
+    count: number;
+    durationMinutes?: number | null;
+    legs: Array<{ mode: string; route: string | null; agency: string | null; from: string | null; to: string | null; minutes: number | null }>;
+  };
+  nearby?: {
+    label: string;
+    count: number;
+    parking: Array<{ name: string; detail: string }>;
+    transit: Array<{ name: string; detail: string }>;
+    taxi: Array<{ name: string; detail: string }>;
+  };
 }
+
+interface ToolRun extends Partial<AgentData> {
+  id: number;
+  role: "user" | "agent" | "tool";
+  text: string;
+}
+
+/** What `/api/agent` (or the fallback router) hands back. */
+interface AgentReply {
+  reply: string;
+  ok: boolean;
+  intent?: string;
+  steps?: string[];
+  /** `/api/agent` nests payloads here; the fallback router returns them flat. */
+  data?: AgentData;
+}
+
+/** Tools whose answer is better shown on the map. */
+const MAP_INTENTS = new Set([
+  // agent tool names
+  "local_time_at",
+  "nearby_places",
+  "nearby_parking_and_transit",
+  // fallback router intent names
+  "time",
+  "places",
+]);
 
 let seq = 1;
 const mk = (m: Omit<ToolRun, "id">): ToolRun => ({ ...m, id: seq++ });
@@ -109,37 +156,35 @@ function HomeInner() {
     setLog(draft);
     setShowAll(false);
     try {
-      const res = await fetch("/api/copilot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: q }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Something went wrong.");
+      const json = await callAgent(q);
+      // `/api/agent` nests payloads under `data`; the fallback router is flat.
+      const data: AgentData = json.data ?? (json as unknown as AgentData);
       const out: ToolRun[] = [...draft];
       for (const s of json.steps ?? []) out.push(mk({ role: "tool", text: s }));
+      const base = json.reply || "I didn't catch that. Try naming two airports, or a flight number like BA117.";
       // Nudge the user to the tool that actually answers geography questions,
       // instead of silently answering from a guessed airport.
-      if (json.intent === "time" || json.intent === "places") {
-        out.push(mk({
-          role: "agent",
-          text: `${json.reply} Open the tracker for the full map and details.`,
-        }));
-      }
+      const reply = json.intent && MAP_INTENTS.has(json.intent)
+        ? `${base}\n\nOpen the tracker for the full map and details.`
+        : base;
       out.push(
         mk({
           role: "agent",
-          text: json.reply ?? "I didn't catch that. Try naming two airports, or a flight number like BA117.",
-          offers: json.offers,
-          flights: json.flights,
-          legs: json.legs,
-          weather: json.weather,
-          airQuality: json.airQuality,
-          sun: json.sun,
-          quakes: json.quakes,
-          places: json.places,
-          rate: json.rate,
-          time: json.time,
+          text: reply,
+          offers: data.offers,
+          flights: data.flights,
+          legs: data.legs,
+          weather: data.weather,
+          airQuality: data.airQuality,
+          sun: data.sun,
+          quakes: data.quakes,
+          places: data.places,
+          rate: data.rate,
+          time: data.time,
+          drive: data.drive,
+          waitTime: data.waitTime,
+          transit: data.transit,
+          nearby: data.nearby,
         }),
       );
       setLog(out);
@@ -148,6 +193,41 @@ function HomeInner() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Ask the real agent. It gets the full tool list and answers in its own
+   * words — no slot parsing, no canned replies.
+   *
+   * If the model is unreachable (proxy down, network down) we fall back to
+   * the deterministic router so the site still answers instead of erroring.
+   */
+  async function callAgent(message: string): Promise<AgentReply> {
+    const post = async (path: string): Promise<AgentReply> => {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      return (await res.json()) as AgentReply;
+    };
+
+    let json: AgentReply;
+    try {
+      json = await post("/api/agent");
+    } catch {
+      json = { reply: "", ok: false };
+    }
+    if (json.ok !== false) return json;
+
+    // The agent route reports model failures as ok:false rather than a 500.
+    const fallback = await post("/api/copilot");
+    return {
+      ...fallback,
+      reply: fallback.reply ?? "Something went wrong. Try again in a moment.",
+      ok: true,
+      steps: ["Model unavailable — answered with the rule-based router.", ...(fallback.steps ?? [])],
+    };
   }
 
   function switchMode(next: boolean) {
@@ -393,7 +473,7 @@ function Bubble({
               <article className="mini-offer" key={i}>
                 <div className="route">{f.flightNo} · {f.airline}</div>
                 <div className="meta">
-                  {f.departure} → {f.arrival} · {f.status}{f.delayMin != null ? ` · ${f.delayMin} min late` : ""}
+                  {f.departure} → {f.arrival} · {f.status}{f.delayMin != null ? ` · ${f.delayMin} min late` : ""}{f.terminal ? ` · Terminal ${f.terminal}` : ""}{f.gate ? ` · Gate ${f.gate}` : ""}
                 </div>
                 <Link className="syn-link" href={`/tracker?flight=${encodeURIComponent(f.flightNo)}`}>Open in tracker →</Link>
               </article>
@@ -474,6 +554,90 @@ function Bubble({
               <li key={i}>{p.name}</li>
             ))}
           </ul>
+        )}
+
+        {m.drive && (
+          <div className="mini-offer">
+            <div className="route">Drive to {m.drive.airport} · {m.drive.code}</div>
+            <div className="meta">
+              {m.drive.minutes != null
+                ? `About ${m.drive.minutes} min by car${m.drive.distanceKm != null ? ` · ${m.drive.distanceKm} km` : ""}${m.drive.origin ? ` from ${m.drive.origin}` : ""}`
+                : "Tell me where you are starting from and I will work out the drive."}
+              {m.drive.budgetLabel ? ` · allow ${m.drive.budgetLabel} door to gate` : ""}
+            </div>
+          </div>
+        )}
+
+        {m.waitTime && (
+          <div className="mini-offer">
+            <div className="route">Security at {m.waitTime.name}</div>
+            <div className="meta">
+              {m.waitTime.standardMinutes != null ? `~${m.waitTime.standardMinutes} min standard` : "No estimate"}
+              {m.waitTime.precheckMinutes != null ? ` · ~${m.waitTime.precheckMinutes} min PreCheck` : ""}
+              {m.waitTime.live ? " · live reading" : ""}
+            </div>
+          </div>
+        )}
+
+        {m.transit && (
+          <div className="mini-offer">
+            <div className="route">Transit to {m.transit.label}</div>
+            <div className="meta">
+              {m.transit.durationMinutes != null
+                ? `About ${m.transit.durationMinutes} min`
+                : m.transit.count > 0
+                  ? "Route found"
+                  : "No route in the open transit dataset for this airport"}
+            </div>
+            {m.transit.legs.length > 0 && (
+              <ul className="plain-list">
+                {m.transit.legs.map((l, i) => (
+                  <li key={i}>
+                    {l.mode}{l.route ? ` ${l.route}` : ""}
+                    {l.from ? ` · ${l.from}${l.to ? ` → ${l.to}` : ""}` : ""}
+                    {l.minutes != null ? ` (${l.minutes} min)` : ""}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {m.nearby && (
+          <div className="mini-offer">
+            <div className="route">Near {m.nearby.label}</div>
+            <div className="meta">{m.nearby.count} place{m.nearby.count === 1 ? "" : "s"} within 2 km</div>
+            {m.nearby.parking.length > 0 && (
+              <>
+                <div className="meta">Parking</div>
+                <ul className="plain-list">
+                  {m.nearby.parking.map((p, i) => (
+                    <li key={`pk${i}`}>{p.name}{p.detail ? ` · ${p.detail}` : ""}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {m.nearby.transit.length > 0 && (
+              <>
+                <div className="meta">Bus / metro stops</div>
+                <ul className="plain-list">
+                  {m.nearby.transit.map((p, i) => (
+                    <li key={`tr${i}`}>{p.name}{p.detail ? ` · ${p.detail}` : ""}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {m.nearby.taxi.length > 0 && (
+              <>
+                <div className="meta">Taxi</div>
+                <ul className="plain-list">
+                  {m.nearby.taxi.map((p, i) => (
+                    <li key={`tx${i}`}>{p.name}{p.detail ? ` · ${p.detail}` : ""}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
         )}
 
         {list.length > 3 && !showAll && (

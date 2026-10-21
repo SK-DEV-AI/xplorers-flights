@@ -2,6 +2,7 @@ import { getProvider } from "@/lib/flights";
 import { flightStatus } from "@/lib/status/aviationstack";
 import { flightSchedule } from "@/lib/status/aerodatabox";
 import { lookupAirport } from "@/lib/aviation/keyless";
+import { localAirport, localTimezoneForCity, TIMEZONE_BY_COUNTRY } from "@/lib/aviation/airports";
 
 /**
  * The tools the agent may call. Each one runs server-side with our secret
@@ -28,13 +29,21 @@ const AIRPORT_CITY: Record<string, string> = {
   LAX: "Los Angeles", DXB: "Dubai", SIN: "Singapore", ORD: "Chicago", YYZ: "Toronto",
 };
 
+/** The city an airport serves — local table first, then the hard-coded map. */
+function cityForAirport(iata: string | null | undefined): string | null {
+  if (!iata) return null;
+  const local = localAirport(iata);
+  if (local?.city) return local.city;
+  return AIRPORT_CITY[iata.toUpperCase()] ?? null;
+}
+
 const TRANSIT_UA =
   "XplorersFlights/1.0 (student project; open source; https://github.com/SK-DEV-AI/xplorers-flights)";
 
 async function resolveCoords(
   code: string | null,
   city: string | null,
-): Promise<{ lat: number; lon: number; label: string } | null> {
+): Promise<{ lat: number; lon: number; label: string; timezone?: string } | null> {
   if (code) {
     try {
       const a = await lookupAirport(code);
@@ -46,18 +55,39 @@ async function resolveCoords(
   if (!city) return null;
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=jsonv2&limit=1`,
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=jsonv2&limit=1&addressdetails=1`,
       { headers: { "User-Agent": TRANSIT_UA }, next: { revalidate: 86400 } },
     );
     if (!res.ok) return null;
-    const list = (await res.json()) as Array<{ lat?: string; lon?: string; name?: string; display_name?: string }>;
+    const list = (await res.json()) as Array<{
+      lat?: string; lon?: string; name?: string; display_name?: string;
+      address?: {
+        city?: string; town?: string; village?: string; county?: string; state?: string;
+        country_code?: string;
+      };
+    }>;
     const first = list[0];
     if (!first) return null;
-    return { lat: Number(first.lat), lon: Number(first.lon), label: first.name ?? city };
+
+    // Nominatim answers in the local language, so Tokyo comes back as
+    // "東京都". The user asked in English — keep their spelling.
+    const local = first.address?.city ?? first.address?.town ?? first.address?.village ?? "";
+    const geo = first.name ?? "";
+    const label = /^[\x20-\x7E]+$/.test(geo) ? geo : local || city;
+
+    // Nominatim does not return a timezone, so we derive one: the airport
+    // table first (exact), then the country the place is in.
+    const country = (first.address?.country_code ?? "").toLowerCase();
+    const tz =
+      localTimezoneForCity(local || city || "") ??
+      (country ? TIMEZONE_BY_COUNTRY[country] ?? null : null);
+
+    return { lat: Number(first.lat), lon: Number(first.lon), label, ...(tz ? { timezone: tz } : {}) };
   } catch {
     return null;
   }
 }
+
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 const num = (v: unknown, fallback = 0): number => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
@@ -82,7 +112,11 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
         });
         return {
           ok: true,
-          summary: `${offers.length} offer${offers.length === 1 ? "" : "s"} found for ${origin} to ${destination}.`,
+          summary: `${offers.length} offer${offers.length === 1 ? "" : "s"} found for ${origin} to ${destination}. ${
+            offers.length
+              ? `Best is ${offers[0].airline} flight ${offers[0].flightNo} at ${offers[0].price} ${offers[0].currency}, ${offers[0].stops === 0 ? "non-stop" : `${offers[0].stops} stop${offers[0].stops === 1 ? "" : "s"}`}, departing ${offers[0].departAt}.`
+              : "No flights on this route right now."
+          }`,
           data: { offers: offers.slice(0, 12), total: offers.length },
           message: "",
         };
@@ -120,7 +154,7 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
         const target = str(args.airport);
         if (!target) return fail("Which airport am I driving to?");
         const airport = await lookupAirport(target);
-        const city = AIRPORT_CITY[airport.iata ?? ""] ?? null;
+        const city = cityForAirport(airport.iata);
         const origin = city ? await resolveCoords(null, city) : null;
         if (!origin) {
           return {
@@ -142,8 +176,18 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
         const distanceKm = Math.round(leg.distance / 1000);
         return {
           ok: true,
-          summary: `Drive to ${airport.name} is about ${minutes} minutes (${distanceKm} km) from ${city}.`,
-          data: { drive: { airport: airport.name, code: airport.iata ?? target, minutes, distanceKm, origin: city, leaveBy: leaveBy(minutes) } },
+          summary: `Drive to ${airport.name} is about ${minutes} minutes (${distanceKm} km) from ${city}. Allow about ${formatBudget(budgetMinutes(minutes))} door to gate including check-in and security.`,
+          data: {
+            drive: {
+              airport: airport.name,
+              code: airport.iata ?? target,
+              minutes,
+              distanceKm,
+              origin: city,
+              budgetMinutes: budgetMinutes(minutes),
+              budgetLabel: formatBudget(budgetMinutes(minutes)),
+            },
+          },
           message: "",
         };
       }
@@ -152,7 +196,7 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
         const target = str(args.airport);
         if (!target) return fail("Which airport should I plan the route to?");
         const airport = await lookupAirport(target);
-        const city = AIRPORT_CITY[airport.iata ?? ""] ?? null;
+        const city = cityForAirport(airport.iata);
         const origin = city ? await resolveCoords(null, city) : null;
         if (!origin) {
           return {
@@ -385,8 +429,15 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
 
       case "local_time_at": {
         const place = str(args.place);
-        const zone = zoneFor(place);
-        if (!zone) return fail("Where? Name a city or country.");
+        const zone = await zoneForPlace(place);
+        if (!zone) {
+          return {
+            ok: true,
+            summary: `I could not work out the timezone for ${place}. Try naming a country or a timezone like Europe/London.`,
+            data: { time: { time: "", zone: place } },
+            message: "",
+          };
+        }
         const res = await fetch(
           `https://timeapi.io/api/time/current/zone?timeZone=${encodeURIComponent(zone)}`,
           { next: { revalidate: 60 } },
@@ -420,56 +471,144 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
   }
 }
 
-/** A compact, factual summary of a tool result, fed back to the model. */
+/**
+ * The facts from a tool result, written as PROSE.
+ *
+ * This used to return JSON.stringify(...). The model then received a JSON
+ * blob as its tool result and reproduced it verbatim as the user-facing
+ * answer — the user saw raw JSON instead of a sentence. Prose in, prose out.
+ */
 export function describeToolResult(name: string, data: Record<string, unknown>): string {
   try {
     switch (name) {
       case "search_flights": {
-        const offers = (data.offers ?? []) as Array<{ airline: string; flightNo: string; origin: string; destination: string; price: string; currency: string; departAt: string; arriveAt: string; stops: number }>;
-        const total = data.total ?? offers.length;
-        return JSON.stringify({
-          total,
-          top: offers.slice(0, 6).map((o) => ({
-            airline: o.airline,
-            flight: o.flightNo,
-            route: `${o.origin}-${o.destination}`,
-            departs: o.departAt,
-            arrives: o.arriveAt,
-            stops: o.stops,
-            price: `${o.price} ${o.currency}`,
-          })),
+        const offers = (data.offers ?? []) as Array<{
+          airline: string; flightNo: string; origin: string; destination: string;
+          price: string; currency: string; departAt: string; arriveAt: string; stops: number;
+        }>;
+        const total = Number(data.total ?? offers.length);
+        if (offers.length === 0) return `No offers found.`;
+        const lines = offers.slice(0, 8).map((o) => {
+          const stop = o.stops === 0 ? "non-stop" : `${o.stops} stop${o.stops === 1 ? "" : "s"}`;
+          return `${o.airline} flight ${o.flightNo}: ${o.origin} to ${o.destination}, ${stop}, departs ${o.departAt}, arrives ${o.arriveAt}, ${o.price} ${o.currency}.`;
         });
+        return `${total} offer${total === 1 ? "" : "s"} found. Best options: ${lines.join(" ")}`;
       }
-      case "flight_status":
-        return JSON.stringify(data.flights ?? []);
-      case "flight_schedule":
-        return JSON.stringify(data.legs ?? []);
-      case "drive_time_to_airport":
-        return JSON.stringify(data.drive ?? {});
-      case "public_transit_to_airport":
-        return JSON.stringify(data.transit ?? {});
-      case "security_wait_time":
-        return JSON.stringify(data.waitTime ?? {});
+
+      case "flight_status": {
+        const rows = (data.flights ?? []) as Array<{
+          flightNo: string; airline: string; status: string; departure: string; arrival: string;
+          scheduled: string | null; estimated: string | null; actual: string | null;
+          delayMin: number | null; terminal: string | null; gate: string | null;
+        }>;
+        if (rows.length === 0) return `No live status rows found.`;
+        return rows
+          .map((r) => {
+            const times = [
+              r.scheduled ? `scheduled ${r.scheduled}` : null,
+              r.actual ? `actual ${r.actual}` : null,
+              r.estimated && r.estimated !== r.actual ? `estimated ${r.estimated}` : null,
+            ].filter(Boolean).join(", ");
+            const delay = r.delayMin != null && r.delayMin !== 0 ? `${r.delayMin} minutes late` : r.delayMin === 0 ? "on time" : null;
+            return `${r.flightNo} (${r.airline}) from ${r.departure} to ${r.arrival}: ${r.status}. ${times}. ${delay ?? ""} Terminal ${r.terminal ?? "unknown"}, gate ${r.gate ?? "unknown"}.`;
+          })
+          .join(" ");
+      }
+
+      case "flight_schedule": {
+        const legs = (data.legs ?? []) as Array<{
+          flightNo: string | null; origin: string; destination: string; scheduledUtc: string | null; distanceKm: number | null;
+        }>;
+        if (legs.length === 0) return `No schedule found.`;
+        return legs
+          .map((l) => `${l.flightNo ?? "Flight"} from ${l.origin} to ${l.destination}, scheduled ${l.scheduledUtc ?? "unknown"}, ${l.distanceKm != null ? `${l.distanceKm} km` : "distance unknown"}.`)
+          .join(" ");
+      }
+
+      case "drive_time_to_airport": {
+        const d = (data.drive ?? {}) as {
+          airport: string; code: string; minutes: number | null; distanceKm: number | null;
+          origin?: string; budgetMinutes?: number | null; budgetLabel?: string | null;
+        };
+        if (d.minutes == null) return `I know ${d.airport}, but I need a starting point to work out the drive.`;
+        return `Drive to ${d.airport} (${d.code}) from ${d.origin ?? "the city"} takes about ${d.minutes} minutes, roughly ${d.distanceKm ?? "?"} km. Allow about ${d.budgetLabel ?? "?"} door to gate including check-in and security.`;
+      }
+
+      case "public_transit_to_airport": {
+        const tr = (data.transit ?? {}) as {
+          label: string; count: number; durationMinutes?: number | null;
+          legs: Array<{ mode: string; route: string | null; agency: string | null; from: string | null; to: string | null; minutes: number | null }>;
+        };
+        if (!tr.legs || tr.legs.length === 0) return `The open transit dataset has no route to ${tr.label}.`;
+        const legs = tr.legs
+          .map((l) => `${l.mode}${l.route ? ` ${l.route}` : ""}${l.from ? ` from ${l.from}` : ""}${l.to ? ` to ${l.to}` : ""}${l.minutes != null ? ` (${l.minutes} min)` : ""}`)
+          .join("; then ");
+        return `Public transit to ${tr.label} takes about ${tr.durationMinutes ?? "?"} minutes. ${legs}.`;
+      }
+
+      case "security_wait_time": {
+        const w = (data.waitTime ?? {}) as {
+          iata: string; name: string; city: string | null;
+          standardMinutes: number | null; precheckMinutes: number | null; live: boolean;
+        };
+        if (!w.iata) return `No security wait data available for that airport.`;
+        return `Security at ${w.name} (${w.iata}) is about ${w.standardMinutes ?? "?"} minutes for standard screening and ${w.precheckMinutes ?? "?"} minutes with PreCheck. ${w.live ? "This is a live reading." : "This is a modelled estimate."}`;
+      }
+
       case "nearby_parking_and_transit":
-      case "nearby_places":
-        return JSON.stringify(data.nearby ?? {});
-      case "weather_at":
-        return JSON.stringify(data.weather ?? {});
-      case "air_quality_at":
-        return JSON.stringify(data.airQuality ?? {});
-      case "sun_times_at":
-        return JSON.stringify(data.sun ?? {});
-      case "recent_earthquakes":
-        return JSON.stringify(data.quakes ?? []);
-      case "exchange_rate":
-        return JSON.stringify(data.rate ?? {});
-      case "local_time_at":
-        return JSON.stringify(data.time ?? {});
+      case "nearby_places": {
+        const n = (data.nearby ?? {}) as {
+          label: string; count: number;
+          parking: Array<{ name: string; detail: string }>;
+          transit: Array<{ name: string; detail: string }>;
+          taxi: Array<{ name: string; detail: string }>;
+        };
+        if (!n.count) return `Nothing found within 2 km of ${n.label}.`;
+        const parts: string[] = [];
+        if (n.parking?.length) parts.push(`parking: ${n.parking.map((p) => `${p.name}${p.detail ? ` (${p.detail})` : ""}`).join(", ")}`);
+        if (n.transit?.length) parts.push(`bus or metro stops: ${n.transit.map((p) => p.name).join(", ")}`);
+        if (n.taxi?.length) parts.push(`taxi ranks: ${n.taxi.map((p) => p.name).join(", ")}`);
+        return `${n.count} place${n.count === 1 ? "" : "s"} within 2 km of ${n.label}. ${parts.join(". ")}.`;
+      }
+
+      case "weather_at": {
+        const w = (data.weather ?? {}) as {
+          label: string; temp: number; code?: number; wind?: number; high?: number; low?: number;
+        };
+        return `Weather at ${w.label}: ${w.temp} degrees Celsius, wind ${w.wind ?? "?"} km/h, today's high ${w.high ?? "?"} and low ${w.low ?? "?"}.`;
+      }
+
+      case "air_quality_at": {
+        const a = (data.airQuality ?? {}) as { label: string; pm25: number | null; usAqi: number | null; band: string };
+        return `Air quality in ${a.label}: US AQI ${a.usAqi ?? "?"} (${a.band}), PM2.5 ${a.pm25 ?? "?"} micrograms per cubic metre.`;
+      }
+
+      case "sun_times_at": {
+        const s = (data.sun ?? {}) as { label: string; sunrise: string | null; sunset: string | null; dayLength: string | null };
+        return `Sunrise in ${s.label} is ${s.sunrise ?? "unknown"}, sunset ${s.sunset ?? "unknown"}, giving ${s.dayLength ?? "an unknown length"} of daylight.`;
+      }
+
+      case "recent_earthquakes": {
+        const qs = (data.quakes ?? []) as Array<{ magnitude: number | null; place: string }>;
+        if (qs.length === 0) return `No earthquakes found in the last day.`;
+        return qs.map((q) => `magnitude ${q.magnitude ?? "?"} near ${q.place}`).join("; ") + ".";
+      }
+
+      case "exchange_rate": {
+        const r = (data.rate ?? {}) as { base: string; quote: string; value: number; date: string };
+        return `1 ${r.base} equals ${r.value} ${r.quote} (reference date ${r.date || "today"}).`;
+      }
+
+      case "local_time_at": {
+        const tm = (data.time ?? {}) as { time: string; zone: string };
+        return `The local time in ${tm.zone} is ${tm.time}.`;
+      }
+
       default:
-        return JSON.stringify(data);
+        return "The lookup succeeded.";
     }
   } catch {
-    return JSON.stringify(data);
+    return "The lookup succeeded.";
   }
 }
 
@@ -544,7 +683,60 @@ async function nearbyPlaces(
       // Try the next mirror.
     }
   }
-  return { count: 0, parking: [], transit: [], taxi: [] };
+
+  // Overpass is often at capacity. Nominatim can still answer the same
+  // question with a bounded search, so the panel is never blank.
+  const fallback = await nearbyViaNominatim(lat, lon, radius);
+  return fallback;
+}
+
+/** Nominatim fallback for nearby places — slower, but always something. */
+async function nearbyViaNominatim(
+  lat: number,
+  lon: number,
+  radius: number,
+): Promise<{ count: number; parking: unknown[]; transit: unknown[]; taxi: unknown[] }> {
+  const parking: Array<{ name: string; detail: string }> = [];
+  const transit: Array<{ name: string; detail: string }> = [];
+  const taxi: Array<{ name: string; detail: string }> = [];
+
+  // A 2 km box around the point.
+  const dLat = radius / 111_320;
+  const dLon = radius / (111_320 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  const viewbox = `${lon - dLon},${lat - dLat},${lon + dLon},${lat + dLat}`;
+
+  const search = async (q: string, bucket: Array<{ name: string; detail: string }>, detail: string) => {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&viewbox=${viewbox}` +
+        `&bounded=1&format=jsonv2&limit=5&extratags=1`,
+        { headers: { "User-Agent": TRANSIT_UA }, signal: AbortSignal.timeout(15000) },
+      );
+      if (!res.ok) return;
+      const list = (await res.json()) as Array<{ name?: string; display_name?: string; extratags?: Record<string, string> }>;
+      for (const row of list) {
+        const name = row.name ?? row.display_name?.split(",")[0];
+        if (!name) continue;
+        const tags = row.extratags ?? {};
+        const extra = [tags.parking, tags["addr:street"]].filter(Boolean).join(" · ");
+        bucket.push({ name, detail: extra || detail });
+      }
+    } catch {
+      /* one query failing is fine */
+    }
+  };
+
+  await search("parking", parking, "Parking");
+  await search("bus stop", transit, "Bus stop");
+  await search("taxi", taxi, "Taxi rank");
+
+  const count = parking.length + transit.length + taxi.length;
+  return {
+    count,
+    parking: parking.slice(0, 5),
+    transit: transit.slice(0, 5),
+    taxi: taxi.slice(0, 3),
+  };
 }
 
 function aqiBand(aqi: number | null): string {
@@ -566,8 +758,24 @@ function dayLength(sunrise: string | null, sunset: string | null): string | null
   return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
 }
 
-function leaveBy(minutes: number): string {
-  return new Date(Date.now() + (minutes + 90) * 60000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/** Airport overhead we allow on top of the drive: check-in, security, gate. */
+const AIRPORT_OVERHEAD_MINUTES = 90;
+
+/**
+ * Total door-to-gate budget, not a wall-clock time.
+ *
+ * We have no departure time unless the user gave us a flight, so a clock
+ * time would be a guess. "Allow about 2 h 9 min door to gate" is honest.
+ */
+function budgetMinutes(driveMinutes: number): number {
+  return driveMinutes + AIRPORT_OVERHEAD_MINUTES;
+}
+
+function formatBudget(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h === 0) return `${m} min`;
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
 
 function zoneFor(place: string): string | null {
@@ -581,4 +789,21 @@ function zoneFor(place: string): string | null {
   if (map[t]) return map[t];
   if (t.startsWith("asia/") || t.startsWith("europe/") || t.startsWith("america/")) return place;
   return null;
+}
+
+/**
+ * The timezone for a place we do not have in the map.
+ *
+ * Geocoding is the reliable way to get one for any city in the world, so we
+ * ask Nominatim for it rather than refusing.
+ */
+async function zoneForPlace(place: string): Promise<string | null> {
+  const mapped = zoneFor(place);
+  if (mapped) return mapped;
+  const airport = localAirport(place);
+  if (airport) return airport.tz;
+  const byCity = localTimezoneForCity(place);
+  if (byCity) return byCity;
+  const coords = await resolveCoords(null, place);
+  return coords?.timezone ?? null;
 }

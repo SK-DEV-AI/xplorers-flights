@@ -13,6 +13,9 @@ right inside the chat.
 **Team:** The Xplorers · B.E. Computer Science, First Year
 **Stack:** Next.js 16 · TypeScript · Tailwind · Supabase · three.js · Leaflet
 
+> **Full technical overview:** [`OVERVIEW.md`](./OVERVIEW.md) — every API, every
+> library, every file, and the architecture in one document.
+
 ---
 
 ## What it does
@@ -33,28 +36,42 @@ right inside the chat.
 | "1 USD to INR" | Frankfurter | ECB reference rate |
 | "Time in London" | timeapi.io | Local time and timezone |
 
-Fifteen tools, every one of them on a free tier or fully keyless.
+Fifteen tools, every one of them on a free tier or fully keyless. The agent
+can use more than one per question — it chains them when an answer needs
+more than one fact.
 
 ---
 
 ## The architecture
 
 ```
-User: "SFO to Tokyo for 2 adults"
+User: "how late am I going to be if I drive to Heathrow?"
    │
    ├─► The model reads the message with the full tool list.
    │     It never calls an API — it only picks a tool and its arguments.
    │
    ├─► Our server runs that tool with our secret key.
-   │     → Duffel Offer Request → 83 real offers
+   │     → drive_time_to_airport → 39 min, 28 km
    │
-   └─► We feed the result back; the model writes the final answer,
-         and the offer cards render inside the conversation.
+   ├─► We feed the facts back into the conversation. The model decides again —
+   │     it may chain another tool (security queue, local time) or just answer.
+   │
+   └─► The model writes the final answer, and the result cards render
+         inside the conversation.
 ```
+
+It is a real loop, up to four rounds per question — not a keyword parser.
+The model can also simply talk, so "what can you do?" or "hello" get a
+human answer rather than a canned one.
 
 **The rule that makes it safe:** the model never holds a key. The browser only
 ever calls our own `/api/*` routes. All secrets live in `.env.local`
 (chmod 600, git-ignored) or in the host's environment settings.
+
+**Two guards sit between the model and the user.** One rejects a reply that
+is a raw data dump instead of an answer; the other rejects any number that
+does not appear in the tool facts, so a price can never be invented. If
+either trips, the site falls back to its own summary of the real data.
 
 **Provider-agnostic:** `FlightProvider` in `src/lib/flights/types.ts` is an
 interface. Duffel implements it today; a train or bus provider drops in as one
@@ -102,6 +119,9 @@ airline and with no money involved.
 - Booking runs against the Duffel **test environment**. Turning it on for real
   needs a live key (KYC, a card on file, and a balance) — no code change.
 - Supabase Auth is not wired yet; `/login` is a local demo sign-in.
+- Major airports are looked up from a local table (`src/lib/aviation/airports.ts`)
+  so the journey tools keep working when the public lookup service is slow.
+  The live service is still used for any code not in that table.
 - The open transit dataset covers Bengaluru, Hyderabad, London and Berlin
   well. Delhi and Mumbai are not in it yet, and the app says so rather than
   pretending.
