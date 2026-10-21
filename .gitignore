@@ -19,3 +19,14 @@ make_pdf.py
 project-writeup.tex
 app/next-env.d.ts
 app/tsconfig.tsbuildinfo
+
+# Internal working docs — kept outside the repo, never shown to reviewers
+HANDOFF.md
+MEETING-GUIDE.md
+API-REFERENCE.md
+FREE-API-MAP.md
+TEAM-HANDBOOK.md
+audit/
+history/
+college-project-private/
+app/AGENTS.md
